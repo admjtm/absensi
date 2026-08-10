@@ -6,6 +6,7 @@
 <title>Absensi — Jurusan Teknik Mesin PNP</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --bg:#EEF2F4;
@@ -938,17 +939,18 @@ const SEED_STUDENTS = {
 
 // Mata kuliah semester 3 D3 Teknik Mesin, berlaku sama untuk kelas 2A-2F
 // (nama, jam per pertemuan sesuai jam/minggu pada tabel akademik)
+// "hari" default disebar Senin-Jumat sebagai perkiraan awal -- admin bisa ubah di tab "Mata Kuliah"
 const MATKUL_SMT3_D3TM = [
-  { nama:'CAD & CAM', jam:4 },
-  { nama:'Termodinamika Teknik', jam:3 },
-  { nama:'Mekanika Teknik 2', jam:2 },
-  { nama:'Elemen Mesin 2', jam:2 },
-  { nama:'Mekanika Fluida', jam:2 },
-  { nama:'Kinematika & Dinamika Teknik', jam:2 },
-  { nama:'Labor Pengujian Bahan & Mekanika Teknik', jam:3 },
-  { nama:'Teknik Produksi', jam:5 },
-  { nama:'Praktek CNC', jam:5 },
-  { nama:'Praktek Produksi 1', jam:5 },
+  { nama:'CAD & CAM', jam:4, hari:'Senin' },
+  { nama:'Termodinamika Teknik', jam:3, hari:'Senin' },
+  { nama:'Mekanika Teknik 2', jam:2, hari:'Selasa' },
+  { nama:'Elemen Mesin 2', jam:2, hari:'Selasa' },
+  { nama:'Mekanika Fluida', jam:2, hari:'Rabu' },
+  { nama:'Kinematika & Dinamika Teknik', jam:2, hari:'Rabu' },
+  { nama:'Labor Pengujian Bahan & Mekanika Teknik', jam:3, hari:'Kamis' },
+  { nama:'Teknik Produksi', jam:5, hari:'Kamis' },
+  { nama:'Praktek CNC', jam:5, hari:'Jumat' },
+  { nama:'Praktek Produksi 1', jam:5, hari:'Jumat' },
 ];
 const SEED_MATKUL = {
   'd3tm:2A': MATKUL_SMT3_D3TM,
@@ -971,6 +973,7 @@ let state = {
   loading: true,
   modal: null, // { type:'image', url } | { type:'rekap', scan }
   summaryMatkulId: null,
+  semesterStart: null, // 'YYYY-MM-DD', tanggal Senin minggu pertama semester (per kelas)
 };
 
 function currentProdi(){ return PRODI.find(p=>p.key===state.prodi); }
@@ -979,11 +982,12 @@ function keyBase(){ return state.prodi+':'+state.kelas; }
 async function loadClass(){
   state.loading = true; render();
   const base = keyBase();
-  const [rosterRes, matkul, scans, rekap] = await Promise.all([
+  const [rosterRes, matkul, scans, rekap, semStart] = await Promise.all([
     safeGetRaw('roster:'+base),
     safeGet('matkul:'+base, []),
     safeGet('scans:'+base, []),
     safeGet('rekap:'+base, {}),
+    safeGet('semesterStart:'+base, null),
   ]);
   if(rosterRes.found){
     state.students = rosterRes.value;
@@ -997,14 +1001,21 @@ async function loadClass(){
   if(matkul && matkul.length){
     state.matkul = matkul;
   } else if(SEED_MATKUL[base]){
-    // first time this class is opened: pre-fill with the official matkul list (with jam/pertemuan)
-    state.matkul = SEED_MATKUL[base].map(m=>({id:uid(), nama:m.nama, jam:m.jam}));
+    // first time this class is opened: pre-fill with the official matkul list (with jam/pertemuan + hari perkiraan)
+    state.matkul = SEED_MATKUL[base].map(m=>({id:uid(), nama:m.nama, jam:m.jam, hari:m.hari||null}));
     await saveMatkul();
   } else {
     state.matkul = matkul;
   }
   state.scans = scans;
   state.rekap = rekap;
+  if(semStart){
+    state.semesterStart = semStart;
+  } else {
+    // belum pernah diatur untuk kelas ini -> pakai default semester berjalan
+    state.semesterStart = DEFAULT_SEMESTER_START;
+    await saveSemesterStart();
+  }
   state.loading = false;
   render();
 }
@@ -1023,6 +1034,7 @@ async function saveStudents(){ await safeSet('roster:'+keyBase(), state.students
 async function saveMatkul(){ await safeSet('matkul:'+keyBase(), state.matkul); }
 async function saveScans(){ await safeSet('scans:'+keyBase(), state.scans); }
 async function saveRekap(){ await safeSet('rekap:'+keyBase(), state.rekap); }
+async function saveSemesterStart(){ await safeSet('semesterStart:'+keyBase(), state.semesterStart); }
 async function safeSet(key, value){
   try{
     await window.storage.set(key, JSON.stringify(value), true);
@@ -1153,26 +1165,59 @@ function renderMahasiswa(){
 }
 
 /* ---- Mata Kuliah ---- */
+const HARI_LIST = ['Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
 function renderMatkul(){
   return `
   <div class="panel">
     <div class="panel-head">
       <div>
+        <h2>Jadwal Semester &mdash; Kelas ${state.kelas}</h2>
+        <p>Tanggal mulai dipakai untuk menghitung "Minggu ke-" pada rekap &amp; export Excel</p>
+      </div>
+    </div>
+    <div class="field" style="max-width:260px;">
+      <label>Tanggal Mulai Semester (Senin minggu 1)</label>
+      <input type="date" id="semesterStartInput" value="${state.semesterStart||''}">
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head">
+      <div>
         <h2>Mata Kuliah &mdash; Kelas ${state.kelas}</h2>
-        <p>Daftar mata kuliah yang diabsen untuk kelas ini</p>
+        <p>Daftar mata kuliah yang diabsen untuk kelas ini. Atur "Hari" supaya export Excel tersusun sesuai jadwal mingguan.</p>
       </div>
     </div>
     <form id="addMatkulForm" class="field-row">
       <div class="field" style="flex:1;"><label>Nama Mata Kuliah</label><input name="nama" placeholder="Contoh: Menggambar Teknik" required></div>
-      <div class="field" style="max-width:160px;"><label>Jam / Pertemuan</label><input name="jam" type="number" min="1" step="1" placeholder="Contoh: 3" required></div>
+      <div class="field" style="max-width:140px;"><label>Jam / Pertemuan</label><input name="jam" type="number" min="1" step="1" placeholder="Contoh: 3" required></div>
+      <div class="field" style="max-width:160px;">
+        <label>Hari</label>
+        <select name="hari">
+          <option value="">&mdash; Pilih hari &mdash;</option>
+          ${HARI_LIST.map(h=>`<option value="${h}">${h}</option>`).join('')}
+        </select>
+      </div>
       <button class="btn btn-primary" type="submit">+ Tambah</button>
     </form>
     ${state.matkul.length ? `
-      <div class="chip-list">
-        ${state.matkul.map(m=>`
-          <div class="matkul-chip">${escapeHtml(m.nama)} <span class="mono" style="opacity:.7;">&middot; ${m.jam||1} jam/m</span> <button data-del-matkul="${m.id}" title="Hapus">&times;</button></div>
-        `).join('')}
-      </div>` : `
+      <table>
+        <thead><tr><th style="width:36px;">No</th><th>Nama Mata Kuliah</th><th style="width:110px;">Jam/Pertemuan</th><th style="width:150px;">Hari</th><th style="width:70px;">Aksi</th></tr></thead>
+        <tbody>
+          ${state.matkul.map((m,i)=>`
+            <tr>
+              <td class="mono">${i+1}</td>
+              <td>${escapeHtml(m.nama)}</td>
+              <td class="mono">${m.jam||1} jam</td>
+              <td>
+                <select data-set-hari="${m.id}">
+                  <option value="" ${!m.hari?'selected':''}>&mdash; Belum diatur &mdash;</option>
+                  ${HARI_LIST.map(h=>`<option value="${h}" ${m.hari===h?'selected':''}>${h}</option>`).join('')}
+                </select>
+              </td>
+              <td><button class="btn btn-danger-ghost btn-sm" data-del-matkul="${m.id}">Hapus</button></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>` : `
       <div class="empty-state">
         <div class="glyph">&#128218;</div>
         <h3>Belum ada mata kuliah</h3>
@@ -1403,6 +1448,15 @@ function renderSummaryMatrix(){
       </table>
     </div>
     <p class="note">Total jam seluruh mata kuliah (${state.matkul.length} matkul) yang sudah direkap: <strong>${totalJamSemuaMatkul}</strong> jam.</p>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div><h2>Export ke Excel &mdash; Format Resmi Mingguan</h2><p>Menghasilkan file .xlsx per minggu (Minggu-1, Minggu-2, dst) sesuai format rekapitulasi absensi jurusan, dengan angka kumulatif sejak awal semester.</p></div>
+    </div>
+    ${!state.semesterStart ? `<div class="note">Atur <strong>Tanggal Mulai Semester</strong> dulu di tab "Mata Kuliah" sebelum export.</div>` : ''}
+    ${!state.matkul.some(m=>m.hari) ? `<div class="note">Atur <strong>Hari</strong> untuk mata kuliah di tab "Mata Kuliah" dulu, supaya kolom mingguan tersusun benar.</div>` : ''}
+    <button class="btn btn-accent" id="exportExcelBtn" ${(!state.semesterStart || !state.matkul.some(m=>m.hari) || !state.students.length) ? 'disabled' : ''}>&#8595; Export ke Excel</button>
   </div>`;
 }
 
@@ -1561,8 +1615,9 @@ function attachHandlers(){
     const fd = new FormData(addMatkulForm);
     const nama = fd.get('nama').trim();
     const jam = parseFloat(fd.get('jam'));
+    const hari = fd.get('hari') || null;
     if(!nama || !jam || jam<=0) return;
-    state.matkul.push({id:uid(), nama, jam});
+    state.matkul.push({id:uid(), nama, jam, hari});
     render();
     saveMatkul();
   });
@@ -1572,6 +1627,15 @@ function attachHandlers(){
     render();
     saveMatkul();
   }));
+  document.querySelectorAll('[data-set-hari]').forEach(sel=> sel.addEventListener('change', ()=>{
+    const mk = state.matkul.find(m=>m.id===sel.dataset.setHari);
+    if(mk){ mk.hari = sel.value || null; saveMatkul(); }
+  }));
+  const semesterStartInput = document.getElementById('semesterStartInput');
+  if(semesterStartInput) semesterStartInput.addEventListener('change', ()=>{
+    state.semesterStart = semesterStartInput.value || null;
+    saveSemesterStart();
+  });
 
   const uploadForm = document.getElementById('uploadScanForm');
   if(uploadForm) uploadForm.addEventListener('submit', async (e)=>{
@@ -1615,6 +1679,148 @@ function attachHandlers(){
     state.summaryMatkulId = summaryMatkulSelect.value;
     render();
   });
+  const exportExcelBtn = document.getElementById('exportExcelBtn');
+  if(exportExcelBtn) exportExcelBtn.addEventListener('click', exportOfficialExcel);
+}
+
+/* ---------------- Export Excel (format resmi mingguan) ---------------- */
+const DAYS_ID = ['Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+const TOTAL_WEEKS = 18;
+const DEFAULT_SEMESTER_START = '2026-08-31'; // Senin minggu pertama, default semester ini
+
+function parseISODate(s){ return new Date(s+'T00:00:00'); }
+function addDaysDate(d,n){ const r=new Date(d); r.setDate(r.getDate()+n); return r; }
+function getMondayOf(d){ const day=d.getDay(); const diff=(day===0?-6:1-day); return addDaysDate(d,diff); }
+function fmtDDMMYYYY(d){
+  const dd=String(d.getDate()).padStart(2,'0'), mm=String(d.getMonth()+1).padStart(2,'0'), yyyy=d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+function weekIndexForDate(dateStr, semesterStartStr){
+  if(!semesterStartStr) return null;
+  const start = getMondayOf(parseISODate(semesterStartStr));
+  const d = getMondayOf(parseISODate(dateStr));
+  const diffDays = Math.round((d-start)/(1000*60*60*24));
+  const wk = Math.floor(diffDays/7)+1;
+  return wk>=1 ? wk : null;
+}
+function weekMondayOf(weekNum, semesterStartStr){
+  const start = getMondayOf(parseISODate(semesterStartStr));
+  return addDaysDate(start, (weekNum-1)*7);
+}
+
+// Total S/I/A dalam JAM untuk 1 matkul + 1 mahasiswa, akumulasi dari semua scan yang direkap
+// dengan tanggal <= uptoDate (inklusif)
+function cumulativeSIA(uptoDate, matkulId, studentId){
+  let S=0,I=0,A=0;
+  const mk = state.matkul.find(m=>m.id===matkulId);
+  const jam = mk ? (mk.jam||1) : 1;
+  state.scans.forEach(sc=>{
+    if(sc.matkulId!==matkulId || !sc.direkap) return;
+    if(parseISODate(sc.tanggal) > uptoDate) return;
+    const r = state.rekap[sc.id];
+    const status = r ? r[studentId] : null;
+    if(status==='S') S+=jam;
+    else if(status==='I') I+=jam;
+    else if(status==='A') A+=jam;
+  });
+  return {S,I,A};
+}
+
+function exportOfficialExcel(){
+  if(typeof XLSX==='undefined'){ alert('Modul Excel belum siap, coba lagi sesaat.'); return; }
+  if(!state.semesterStart){ alert('Atur Tanggal Mulai Semester dulu di tab Mata Kuliah.'); return; }
+  if(!state.students.length){ alert('Belum ada data mahasiswa.'); return; }
+
+  const matkulByHari = {};
+  DAYS_ID.forEach(d=> matkulByHari[d] = state.matkul.filter(m=>m.hari===d));
+
+  const colNO=1, colBP=2, colNAMA=3, colS=4, colI=5, colA=6, colJUMLAH=7, colPKTOS=8, colKOMP=9, colStart=10;
+  const data = [];
+  const merges = [];
+  function setCell(r,c,v){ while(data.length<=r) data.push([]); data[r][c]=v; }
+  function mergeRange(r1,c1,r2,c2){ if(r1===r2 && c1===c2) return; merges.push({s:{r:r1,c:c1},e:{r:r2,c:c2}}); }
+
+  let row = 0;
+  for(let week=1; week<=TOTAL_WEEKS; week++){
+    const monday = weekMondayOf(week, state.semesterStart);
+    const saturday = addDaysDate(monday, 5); // Sabtu = akhir minggu kuliah (Senin-Sabtu)
+    const prevSaturday = addDaysDate(monday, -2); // Sabtu minggu sebelumnya
+
+    const rTitle=row, rJurusan=row+1, rProdi=row+2, rKelas=row+3, rHead=row+4, rSub=row+5, rJam=row+6, rSIA=row+7;
+
+    setCell(rTitle,colBP,'REKAPITULASI ABSENSI MAHASISWA');
+    setCell(rTitle,colStart,'MINGGU - '+week);
+    setCell(rJurusan,colBP,'JURUSAN TEKNIK MESIN');
+    setCell(rProdi,colBP,'PROGRAM STUDI '+(currentProdi()?currentProdi().nama.toUpperCase():''));
+    setCell(rKelas,6,'KELAS : '+state.kelas);
+
+    setCell(rHead,colNO,'NO'); mergeRange(rHead,colNO,rSIA,colNO);
+    setCell(rHead,colBP,'BP'); mergeRange(rHead,colBP,rSIA,colBP);
+    setCell(rHead,colNAMA,'NAMA'); mergeRange(rHead,colNAMA,rSIA,colNAMA);
+    setCell(rHead,colS,'JUMLAH'); mergeRange(rHead,colS,rHead,colA);
+    setCell(rHead,colJUMLAH,'JUMLAH S+I+A (Jam)'); mergeRange(rHead,colJUMLAH,rSIA,colJUMLAH);
+    setCell(rHead,colPKTOS,'PKTOS (Jam)'); mergeRange(rHead,colPKTOS,rSIA,colPKTOS);
+    setCell(rHead,colKOMP,'JUMLAH KOMPENSASI {(Sx0)+(Ix1)+(Ax2)+PKTOS}'); mergeRange(rHead,colKOMP,rSIA,colKOMP);
+    setCell(rSub,colS,'S (Jam)'); setCell(rSub,colI,'I (Jam)'); setCell(rSub,colA,'A (Jam)');
+
+    let col = colStart;
+    DAYS_ID.forEach((day,dIdx)=>{
+      const list = matkulByHari[day];
+      if(!list.length) return;
+      const dayStartCol = col;
+      const dateForDay = addDaysDate(monday, dIdx);
+      list.forEach(mk=>{
+        setCell(rSub,col,mk.nama); mergeRange(rSub,col,rSub,col+2);
+        setCell(rJam,col,(mk.jam||1)+' jam'); mergeRange(rJam,col,rJam,col+2);
+        setCell(rSIA,col,'S'); setCell(rSIA,col+1,'I'); setCell(rSIA,col+2,'A');
+        col+=3;
+      });
+      setCell(rHead,dayStartCol, day+', '+fmtDDMMYYYY(dateForDay));
+      mergeRange(rHead,dayStartCol,rHead,col-1);
+    });
+    const ketCol = col;
+    setCell(rHead,ketCol,'KET.'); mergeRange(rHead,ketCol,rSIA,ketCol);
+
+    let r = rSIA+1;
+    state.students.forEach((st,i)=>{
+      setCell(r,colNO,i+1);
+      setCell(r,colBP,st.nim);
+      setCell(r,colNAMA,st.nama);
+      let c2 = colStart;
+      DAYS_ID.forEach(day=>{
+        matkulByHari[day].forEach(mk=>{
+          const cumNow = cumulativeSIA(saturday, mk.id, st.id);
+          const cumPrev = week>1 ? cumulativeSIA(prevSaturday, mk.id, st.id) : {S:0,I:0,A:0};
+          const wS=cumNow.S-cumPrev.S, wI=cumNow.I-cumPrev.I, wA=cumNow.A-cumPrev.A;
+          if(wS) setCell(r,c2,wS);
+          if(wI) setCell(r,c2+1,wI);
+          if(wA) setCell(r,c2+2,wA);
+          c2+=3;
+        });
+      });
+      const total = state.matkul.reduce((acc,mk)=>{
+        const c = cumulativeSIA(saturday, mk.id, st.id);
+        acc.S+=c.S; acc.I+=c.I; acc.A+=c.A;
+        return acc;
+      },{S:0,I:0,A:0});
+      setCell(r,colS,total.S); setCell(r,colI,total.I); setCell(r,colA,total.A);
+      setCell(r,colJUMLAH,total.S+total.I+total.A);
+      setCell(r,colPKTOS,0);
+      setCell(r,colKOMP, total.I*1 + total.A*2 + 0);
+      r++;
+    });
+
+    row = r+2; // spasi sebelum blok minggu berikutnya
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  ws['!merges'] = merges;
+  ws['!cols'] = [{wch:2},{wch:5},{wch:14},{wch:26},{wch:8},{wch:8},{wch:8},{wch:10},{wch:10},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  const sheetName = (state.kelas||'Kelas').slice(0,31);
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const fname = `Rekap_Absensi_${state.prodi}_${state.kelas}.xlsx`;
+  XLSX.writeFile(wb, fname);
 }
 
 /* ---------------- Utils ---------------- */

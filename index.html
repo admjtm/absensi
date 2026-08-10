@@ -178,6 +178,16 @@
   .excel-table tbody td{padding:6px 10px;}
   .excel-table tbody tr:nth-child(even){background:#FAFBFC;}
   .excel-table tbody tr:hover{background:#EEF4FA;}
+  /* Tabel dengan banyak kolom (rekap per minggu): rata lebar, muat 1 layar, tanpa scroll samping */
+  .excel-table--fit{
+    table-layout:fixed; width:100%;
+  }
+  .excel-table--fit th, .excel-table--fit td{
+    font-size:9.5px; padding:3px 2px; word-break:break-word; overflow-wrap:break-word;
+    line-height:1.25;
+  }
+  .excel-table--fit thead th{ padding:3px 2px; font-size:9.5px; }
+  .excel-table--fit td.nim, .excel-table--fit td.mono{ font-size:9px; }
   .empty-state{
     text-align:center; padding:36px 20px; color:var(--ink-soft);
   }
@@ -1460,7 +1470,7 @@ function renderWeeklyRecap(){
     const dateForDay = addDaysDate(monday, dIdx);
     dayHeaderCells += `<th colspan="${list.length*3}">${day}, ${fmtDDMMYYYY(dateForDay)}</th>`;
     list.forEach(mk=>{
-      matkulSubHeaderCells += `<th colspan="3" style="font-weight:600;">${escapeHtml(mk.nama)}<br><span class="mono" style="font-weight:400;">${mk.jam||1} jam &middot; S/I/A</span></th>`;
+      matkulSubHeaderCells += `<th colspan="3" style="font-weight:600;">${escapeHtml(mk.nama)}<br><span class="mono" style="font-weight:400;">${mk.jam||1}j</span></th>`;
     });
   });
 
@@ -1511,8 +1521,8 @@ function renderWeeklyRecap(){
       <select id="summaryWeekSelect">${weekOptions}</select>
     </div>
     ${!adaJadwal ? `<div class="note">Belum ada mata kuliah yang diatur "Hari"-nya di tab "Mata Kuliah" &mdash; kolom per mata kuliah belum bisa ditampilkan.</div>` : ''}
-    <div style="overflow-x:auto;">
-      <table class="excel-table">
+    <div style="width:100%;">
+      <table class="excel-table excel-table--fit">
         <thead>
           <tr>
             <th rowspan="2">No</th>

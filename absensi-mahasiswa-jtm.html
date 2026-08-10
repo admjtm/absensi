@@ -1,0 +1,1563 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Absensi — Jurusan Teknik Mesin PNP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#EEF2F4;
+    --paper:#F7F9FA;
+    --surface:#FFFFFF;
+    --ink:#0F2340;
+    --ink-soft:#4C5C72;
+    --primary:#1F3A63;
+    --primary-light:#2C5490;
+    --accent:#E8871E;
+    --accent-ink:#7A4506;
+    --danger:#B23A2E;
+    --success:#2E7D6B;
+    --info:#4A6FA5;
+    --line:#D7DEE3;
+    --line-strong:#B9C4CC;
+    --radius:10px;
+    --shadow:0 1px 2px rgba(15,35,64,.06), 0 6px 16px rgba(15,35,64,.06);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    font-family:'Inter',sans-serif;
+    color:var(--ink);
+    background:
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0/100% 28px,
+      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0/28px 100%,
+      var(--bg);
+    background-attachment:fixed;
+    background-blend-mode:normal;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  body::before{
+    content:"";
+    position:fixed; inset:0;
+    background-image:
+      linear-gradient(rgba(238,242,244,.86), rgba(238,242,244,.86));
+    pointer-events:none; z-index:-1;
+  }
+  h1,h2,h3,.display{font-family:'Space Grotesk',sans-serif; letter-spacing:-.01em;}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  button{font-family:inherit; cursor:pointer;}
+  input,select{font-family:inherit;}
+  ::selection{background:var(--accent); color:#fff;}
+
+  /* ---------- Topbar ---------- */
+  .topbar{
+    position:sticky; top:0; z-index:40;
+    background:var(--primary);
+    color:#fff;
+    border-bottom:3px solid var(--accent);
+  }
+  .topbar-inner{
+    max-width:1180px; margin:0 auto; padding:14px 20px;
+    display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+  }
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{
+    width:40px;height:40px;border-radius:8px;
+    background:var(--accent);
+    display:flex;align-items:center;justify-content:center;
+    color:var(--primary); font-family:'Space Grotesk'; font-weight:700; font-size:15px;
+    flex-shrink:0;
+    box-shadow:inset 0 0 0 2px rgba(15,35,64,.15);
+  }
+  .brand-text .eyebrow{font-size:11px; letter-spacing:.14em; text-transform:uppercase; opacity:.75; font-weight:600;}
+  .brand-text h1{font-size:17px; margin:1px 0 0; font-weight:700; line-height:1.2;}
+
+  .role-switch{
+    display:flex; background:rgba(255,255,255,.1); border-radius:999px; padding:3px; gap:2px;
+    border:1px solid rgba(255,255,255,.18);
+  }
+  .role-switch button{
+    border:none; background:transparent; color:rgba(255,255,255,.75);
+    padding:7px 16px; border-radius:999px; font-size:13px; font-weight:600;
+    transition:.15s;
+  }
+  .role-switch button.active{ background:var(--accent); color:var(--primary); }
+
+  /* ---------- Layout ---------- */
+  .wrap{max-width:1180px; margin:0 auto; padding:24px 20px 64px;}
+
+  .selector-card{
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
+    box-shadow:var(--shadow); padding:18px 20px; margin-bottom:18px;
+  }
+  .selector-row{display:flex; flex-wrap:wrap; gap:22px; align-items:flex-start;}
+  .selector-group{flex:1; min-width:240px;}
+  .selector-label{font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-soft); font-weight:700; margin-bottom:8px; display:block;}
+  .prodi-tabs{display:flex; flex-wrap:wrap; gap:8px;}
+  .prodi-tab{
+    border:1px solid var(--line-strong); background:var(--paper); color:var(--ink);
+    padding:8px 12px; border-radius:8px; font-size:12.5px; font-weight:600;
+    display:flex; flex-direction:column; align-items:flex-start; gap:2px; line-height:1.25;
+    transition:.15s; min-width:120px;
+  }
+  .prodi-tab .code{font-family:'IBM Plex Mono'; font-size:10.5px; color:var(--accent-ink); font-weight:600;}
+  .prodi-tab:hover{border-color:var(--primary-light);}
+  .prodi-tab.active{background:var(--primary); border-color:var(--primary); color:#fff;}
+  .prodi-tab.active .code{color:var(--accent);}
+
+  .kelas-chips{display:flex; flex-wrap:wrap; gap:6px;}
+  .kelas-chip{
+    border:1px solid var(--line-strong); background:var(--paper);
+    padding:6px 12px; border-radius:999px; font-size:12.5px; font-weight:600; color:var(--ink-soft);
+    font-family:'IBM Plex Mono';
+  }
+  .kelas-chip.active{background:var(--accent); border-color:var(--accent); color:var(--accent-ink);}
+  .kelas-chip:hover{border-color:var(--primary-light); color:var(--ink);}
+
+  /* ---------- Tabs ---------- */
+  .tabnav{display:flex; gap:4px; border-bottom:1px solid var(--line-strong); margin-bottom:20px; flex-wrap:wrap;}
+  .tabnav button{
+    border:none; background:none; padding:10px 16px; font-size:13.5px; font-weight:600;
+    color:var(--ink-soft); border-bottom:2px solid transparent; margin-bottom:-1px;
+  }
+  .tabnav button.active{color:var(--primary); border-bottom-color:var(--accent);}
+  .tabnav button:hover{color:var(--primary);}
+
+  /* ---------- Card with corner brackets (signature element) ---------- */
+  .panel{
+    position:relative;
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
+    box-shadow:var(--shadow); padding:22px 24px; margin-bottom:18px;
+  }
+  .panel::before,.panel::after,.panel .cb1,.panel .cb2{
+    content:""; position:absolute; width:14px; height:14px; pointer-events:none;
+  }
+  .panel::before{ top:-1px; left:-1px; border-top:2px solid var(--accent); border-left:2px solid var(--accent); }
+  .panel::after{ bottom:-1px; right:-1px; border-bottom:2px solid var(--accent); border-right:2px solid var(--accent); }
+  .panel-head{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; flex-wrap:wrap;}
+  .panel-head h2{font-size:16px; margin:0; font-weight:700;}
+  .panel-head p{font-size:12.5px; color:var(--ink-soft); margin:3px 0 0;}
+
+  /* ---------- Buttons ---------- */
+  .btn{
+    display:inline-flex; align-items:center; gap:6px; border-radius:7px; padding:8px 14px;
+    font-size:13px; font-weight:600; border:1px solid transparent; transition:.15s;
+  }
+  .btn-primary{background:var(--primary); color:#fff;}
+  .btn-primary:hover{background:var(--primary-light);}
+  .btn-accent{background:var(--accent); color:var(--accent-ink);}
+  .btn-accent:hover{filter:brightness(1.05);}
+  .btn-ghost{background:transparent; border-color:var(--line-strong); color:var(--ink-soft);}
+  .btn-ghost:hover{border-color:var(--primary-light); color:var(--primary);}
+  .btn-danger-ghost{background:transparent; border-color:var(--line-strong); color:var(--danger);}
+  .btn-danger-ghost:hover{background:#FBEBE9; border-color:var(--danger);}
+  .btn-sm{padding:5px 10px; font-size:12px;}
+  .btn:disabled{opacity:.45; cursor:not-allowed;}
+
+  /* ---------- Table ---------- */
+  table{width:100%; border-collapse:collapse; font-size:13px;}
+  th{
+    text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-soft);
+    padding:9px 10px; border-bottom:1px solid var(--line-strong); font-weight:700;
+  }
+  td{padding:9px 10px; border-bottom:1px solid var(--line);}
+  tr:last-child td{border-bottom:none;}
+  .nim{font-family:'IBM Plex Mono'; color:var(--primary); font-weight:500;}
+
+  /* ---------- Excel-style recap table ---------- */
+  .excel-table{border-collapse:collapse; width:100%; font-size:12.5px;}
+  .excel-table th,.excel-table td{border:1px solid #444B54;}
+  .excel-table thead th{
+    background:var(--paper); color:var(--ink); text-transform:none; letter-spacing:0;
+    font-weight:700; font-size:12.5px; text-align:center; padding:7px 8px; vertical-align:middle;
+  }
+  .excel-table tbody td{padding:6px 10px;}
+  .excel-table tbody tr:nth-child(even){background:#FAFBFC;}
+  .excel-table tbody tr:hover{background:#EEF4FA;}
+  .empty-state{
+    text-align:center; padding:36px 20px; color:var(--ink-soft);
+  }
+  .empty-state .glyph{font-size:26px; margin-bottom:8px;}
+  .empty-state h3{font-size:14px; color:var(--ink); margin:0 0 4px;}
+  .empty-state p{font-size:12.5px; margin:0;}
+
+  /* ---------- Forms ---------- */
+  .field-row{display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;}
+  .field{display:flex; flex-direction:column; gap:5px;}
+  .field label{font-size:11px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.06em;}
+  .field input,.field select{
+    border:1px solid var(--line-strong); border-radius:7px; padding:8px 10px; font-size:13px; color:var(--ink);
+    background:var(--paper); min-width:160px;
+  }
+  .field input:focus,.field select:focus{outline:2px solid var(--primary-light); outline-offset:1px; border-color:var(--primary-light);}
+
+  /* ---------- Chips list (matkul) ---------- */
+  .chip-list{display:flex; flex-wrap:wrap; gap:8px; margin-top:14px;}
+  .matkul-chip{
+    display:flex; align-items:center; gap:8px; background:var(--paper); border:1px solid var(--line-strong);
+    border-radius:999px; padding:6px 8px 6px 14px; font-size:12.5px; font-weight:600;
+  }
+  .matkul-chip button{border:none; background:var(--line-strong); color:var(--ink); width:18px; height:18px; border-radius:50%; font-size:11px; line-height:1;}
+  .matkul-chip button:hover{background:var(--danger); color:#fff;}
+
+  /* ---------- Scan cards ---------- */
+  .scan-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:14px; margin-top:14px;}
+  .scan-card{border:1px solid var(--line); border-radius:9px; overflow:hidden; background:var(--paper);}
+  .scan-thumb{width:100%; height:130px; object-fit:cover; display:block; background:#dde3e7; cursor:zoom-in;}
+  .scan-meta{padding:10px 12px;}
+  .scan-meta .mk{font-size:12.5px; font-weight:700; margin:0 0 2px;}
+  .scan-meta .dt{font-size:11.5px; color:var(--ink-soft); font-family:'IBM Plex Mono'; margin:0 0 8px;}
+  .scan-actions{display:flex; gap:6px;}
+
+  /* stamp badge */
+  .stamp{
+    display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:5px;
+    font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+    border:1.5px dashed currentColor;
+  }
+  .stamp-done{color:var(--success);}
+  .stamp-pending{color:var(--accent-ink);}
+
+  /* ---------- Status radio "stamps" ---------- */
+  .status-group{display:flex; gap:4px;}
+  .status-opt{position:relative;}
+  .status-opt input{position:absolute; opacity:0; inset:0; cursor:pointer;}
+  .status-opt span{
+    display:block; padding:5px 9px; border-radius:6px; font-size:11px; font-weight:700; text-align:center;
+    border:1.5px solid var(--line-strong); color:var(--ink-soft); min-width:44px;
+  }
+  .status-opt input:checked + span.H{background:#E4F3EE; border-color:var(--success); color:var(--success);}
+  .status-opt input:checked + span.I{background:#FDF0DE; border-color:var(--accent); color:var(--accent-ink);}
+  .status-opt input:checked + span.S{background:#E9EFF8; border-color:var(--info); color:var(--info);}
+  .status-opt input:checked + span.A{background:#FAE7E5; border-color:var(--danger); color:var(--danger);}
+  .status-opt input:focus-visible + span{outline:2px solid var(--primary-light); outline-offset:1px;}
+
+  /* ---------- Modal ---------- */
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(15,35,64,.55); backdrop-filter:blur(1px);
+    display:flex; align-items:center; justify-content:center; padding:20px; z-index:100;
+  }
+  .modal{
+    background:#fff; border-radius:12px; max-width:760px; width:100%; max-height:88vh; overflow:auto;
+    box-shadow:0 20px 60px rgba(0,0,0,.3);
+  }
+  .modal-head{display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line); position:sticky; top:0; background:#fff;}
+  .modal-head h3{margin:0; font-size:15px;}
+  .modal-close{border:none; background:var(--paper); width:28px; height:28px; border-radius:50%; font-size:15px; color:var(--ink-soft);}
+  .modal-body{padding:18px 20px;}
+  .modal img.full{width:100%; border-radius:8px; border:1px solid var(--line); margin-bottom:16px;}
+
+  .stat-row{display:flex; gap:12px; flex-wrap:wrap; margin-bottom:18px;}
+  .stat-box{flex:1; min-width:130px; background:var(--surface); border:1px solid var(--line); border-radius:9px; padding:12px 14px;}
+  .stat-box .num{font-family:'Space Grotesk'; font-size:22px; font-weight:700; color:var(--primary);}
+  .stat-box .lab{font-size:11px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.06em; font-weight:600;}
+
+  .note{
+    font-size:12px; color:var(--ink-soft); background:var(--paper); border:1px dashed var(--line-strong);
+    border-radius:8px; padding:10px 12px; margin-top:14px; line-height:1.5;
+  }
+  .footer-note{max-width:1180px; margin:0 auto; padding:0 20px 40px; font-size:11.5px; color:var(--ink-soft); text-align:center;}
+
+  @media (max-width:640px){
+    .panel{padding:18px;}
+    .topbar-inner{flex-direction:column; align-items:flex-start;}
+  }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="brand-mark">TM</div>
+      <div class="brand-text">
+        <div class="eyebrow">Politeknik Negeri Padang</div>
+        <h1>Absensi — Jurusan Teknik Mesin</h1>
+      </div>
+    </div>
+    <div class="role-switch" id="roleSwitch"></div>
+  </div>
+</div>
+
+<div class="wrap" id="app"></div>
+<div class="footer-note">Data tersimpan bersama di penyimpanan artifact ini &mdash; dapat dilihat oleh siapa pun yang membuka tautan ini.</div>
+
+<script>
+const PRODI = [
+  { key:'d3tm',   kode:'D3-TM',   nama:'D3 Teknik Mesin',                  kelas: kelasD3() },
+  { key:'d3tab',  kode:'D3-TAB',  nama:'D3 Teknik Alat Berat',             kelas: kelasD3() },
+  { key:'d4tmpr', kode:'D4-TMPR', nama:'D4 Teknik Manufaktur',             kelas: kelasD4() },
+  { key:'d4rpm',  kode:'D4-RPM',  nama:'D4 Rekayasa Perancangan Mekanik',  kelas: kelasD4() },
+];
+function kelasD3(){ const t=[]; for(let tk=1;tk<=3;tk++) for(const h of ['A','B','C','D','E','F']) t.push(tk+h); return t; }
+function kelasD4(){ const t=[]; for(let tk=1;tk<=2;tk++) for(const h of ['A','B','C','D','E','F']) t.push(tk+h); t.push('3A','3B','4A','4B'); return t; }
+
+const STATUS = [
+  { code:'H', label:'Hadir' },
+  { code:'I', label:'Izin' },
+  { code:'S', label:'Sakit' },
+  { code:'A', label:'Alpa' },
+];
+
+const SEED_STUDENTS = {
+  "d3tm:2A": [
+    {
+      "nama": "Rahmat Al Hamid",
+      "nim": "2501011007"
+    },
+    {
+      "nama": "Quiza Ananda Irawan",
+      "nim": "2501011019"
+    },
+    {
+      "nama": "Novira Sadni Putri",
+      "nim": "2501011025"
+    },
+    {
+      "nama": "Arbi Sandi Ukias",
+      "nim": "2501011031"
+    },
+    {
+      "nama": "Arif Lukman Hakim",
+      "nim": "2501011037"
+    },
+    {
+      "nama": "Ahmad Radhil Yusra Farzi",
+      "nim": "2501012013"
+    },
+    {
+      "nama": "Mochamad Rizky Fachrezza",
+      "nim": "2501012019"
+    },
+    {
+      "nama": "Thoyyiban Aliun Najib",
+      "nim": "2501012025"
+    },
+    {
+      "nama": "Anugerah Dwicahyo",
+      "nim": "2501012043"
+    },
+    {
+      "nama": "Davin Gonsalves",
+      "nim": "2501012055"
+    },
+    {
+      "nama": "Luthfi Suhada",
+      "nim": "2501012061"
+    },
+    {
+      "nama": "Laksana Elnas Rahman",
+      "nim": "2501012067"
+    },
+    {
+      "nama": "Muhammad Rizky",
+      "nim": "2501013007"
+    },
+    {
+      "nama": "Gabriel Aswangga",
+      "nim": "2501013013"
+    },
+    {
+      "nama": "Rofiq Surya Ramadhan",
+      "nim": "2501013019"
+    },
+    {
+      "nama": "Ahmad Riziq Darman",
+      "nim": "2501013025"
+    },
+    {
+      "nama": "Ahmad Ilham",
+      "nim": "2501013031"
+    },
+    {
+      "nama": "Abel Maulana",
+      "nim": "2501013037"
+    },
+    {
+      "nama": "Wizelza Aditya Saputra",
+      "nim": "2501013049"
+    },
+    {
+      "nama": "Risfal Adha",
+      "nim": "2501011012"
+    },
+    {
+      "nama": "Difin Juliandika",
+      "nim": "2501011024"
+    },
+    {
+      "nama": "Asrafil Ulwan",
+      "nim": "2501011030"
+    },
+    {
+      "nama": "Luthfi Hibatullah",
+      "nim": "2501011039"
+    },
+    {
+      "nama": "Osi Su'ara",
+      "nim": "2501011042"
+    },
+    {
+      "nama": "Wahyu Zulfirman",
+      "nim": "2501012006"
+    },
+    {
+      "nama": "Naufal Fauzi",
+      "nim": "2501012018"
+    },
+    {
+      "nama": "Nuzul Khairulnas Thayib",
+      "nim": "2501013030"
+    }
+  ],
+  "d3tm:2B": [
+    {
+      "nama": "Zykri Nofrialdi",
+      "nim": "2501011002"
+    },
+    {
+      "nama": "Rizky Dwi Kurnia",
+      "nim": "2501011008"
+    },
+    {
+      "nama": "Alhadi Fajar",
+      "nim": "2501011014"
+    },
+    {
+      "nama": "Yusran Putra Jali",
+      "nim": "2501011020"
+    },
+    {
+      "nama": "Farel Aidil Pratama",
+      "nim": "2501011026"
+    },
+    {
+      "nama": "Raffy Achmad",
+      "nim": "2501011032"
+    },
+    {
+      "nama": "Ryan Ardiansyah",
+      "nim": "2501011038"
+    },
+    {
+      "nama": "Evan Febrian Umara",
+      "nim": "2501012020"
+    },
+    {
+      "nama": "Farid Ash Shiddiqi",
+      "nim": "2501012026"
+    },
+    {
+      "nama": "Muhammad Abyan Falih",
+      "nim": "2501012038"
+    },
+    {
+      "nama": "Raziqul Khair",
+      "nim": "2501012050"
+    },
+    {
+      "nama": "Julvinas",
+      "nim": "2501012056"
+    },
+    {
+      "nama": "Fathir Islamy Edenly",
+      "nim": "2501012062"
+    },
+    {
+      "nama": "Muhammad Al Hafizh",
+      "nim": "2501013008"
+    },
+    {
+      "nama": "Rahmatul Hadid Susilo Permana",
+      "nim": "2501013014"
+    },
+    {
+      "nama": "Daffaa Haniif Gusman",
+      "nim": "2501013020"
+    },
+    {
+      "nama": "Muhammad Farhan Azhima",
+      "nim": "2501013026"
+    },
+    {
+      "nama": "Hidayatul Akmal",
+      "nim": "2501013032"
+    },
+    {
+      "nama": "Muhammad Farid Rizqullah",
+      "nim": "2501013038"
+    },
+    {
+      "nama": "Ikhwanul Haikal",
+      "nim": "2501013050"
+    },
+    {
+      "nama": "Javier Giffari",
+      "nim": "2501013056"
+    },
+    {
+      "nama": "Rafqi Abdillah Putra",
+      "nim": "2501012024"
+    },
+    {
+      "nama": "Rahmat Ferdi",
+      "nim": "2501012036"
+    },
+    {
+      "nama": "Rahmat Fajri Hidayat",
+      "nim": "2501012042"
+    },
+    {
+      "nama": "Andri Hidayat",
+      "nim": "2501012048"
+    },
+    {
+      "nama": "Muhammad Arkan Saputra",
+      "nim": "2501012060"
+    }
+  ],
+  "d3tm:2C": [
+    {
+      "nama": "Rezky Ananda Pratama",
+      "nim": "2401011027"
+    },
+    {
+      "nama": "Abel Putra Pratama",
+      "nim": "2501011003"
+    },
+    {
+      "nama": "Deffri Yendri Pratama",
+      "nim": "2501011009"
+    },
+    {
+      "nama": "Rian Dinatigo",
+      "nim": "2501011015"
+    },
+    {
+      "nama": "Vodila Sugita",
+      "nim": "2501011018"
+    },
+    {
+      "nama": "Sri Mulyani",
+      "nim": "2501011021"
+    },
+    {
+      "nama": "Gema Henza Purnama",
+      "nim": "2501011027"
+    },
+    {
+      "nama": "Ananda Novriwaldi",
+      "nim": "2501011033"
+    },
+    {
+      "nama": "Muhammad Zul Haikal",
+      "nim": "2501012003"
+    },
+    {
+      "nama": "Zikry Shaffata",
+      "nim": "2501012009"
+    },
+    {
+      "nama": "Afdal Amdini",
+      "nim": "2501012015"
+    },
+    {
+      "nama": "Fajri Syahratul Makna",
+      "nim": "2501012021"
+    },
+    {
+      "nama": "Tegar Ari Winata",
+      "nim": "2501012027"
+    },
+    {
+      "nama": "Bernardino Putra Dolo",
+      "nim": "2501012039"
+    },
+    {
+      "nama": "Muhammad Fadly",
+      "nim": "2501012045"
+    },
+    {
+      "nama": "Varel Muhammad Jackfri",
+      "nim": "2501012051"
+    },
+    {
+      "nama": "Davi Badrizi",
+      "nim": "2501012063"
+    },
+    {
+      "nama": "Arsyadafil Haqqi",
+      "nim": "2501013003"
+    },
+    {
+      "nama": "Muhammad Raihan Chandra",
+      "nim": "2501013009"
+    },
+    {
+      "nama": "Farel Adrizal",
+      "nim": "2501013021"
+    },
+    {
+      "nama": "Falah Marzuq",
+      "nim": "2501013027"
+    },
+    {
+      "nama": "Evan Aprilian Devin",
+      "nim": "2501013039"
+    },
+    {
+      "nama": "Rengga Octa Fitriadi",
+      "nim": "2501013045"
+    },
+    {
+      "nama": "Ibnu Razzan Dedy",
+      "nim": "2501013051"
+    },
+    {
+      "nama": "Muhammad Adrian Raja Tegar",
+      "nim": "2501012066"
+    },
+    {
+      "nama": "Muhammad Rizki",
+      "nim": "2501013006"
+    },
+    {
+      "nama": "Musyfiqurrahman",
+      "nim": "2501013012"
+    }
+  ],
+  "d3tm:2D": [
+    {
+      "nama": "Mohamad Ilham Syah Putra",
+      "nim": "2401013042"
+    },
+    {
+      "nama": "Riky Syahbana Hasibuan",
+      "nim": "2501011004"
+    },
+    {
+      "nama": "Reza Okrian",
+      "nim": "2501011010"
+    },
+    {
+      "nama": "Habib Ramadhan",
+      "nim": "2501011022"
+    },
+    {
+      "nama": "Rivo Armansyah",
+      "nim": "2501011028"
+    },
+    {
+      "nama": "Ibnu Wahyu Pratama",
+      "nim": "2501011034"
+    },
+    {
+      "nama": "Siti Raissya Chandra",
+      "nim": "2501011041"
+    },
+    {
+      "nama": "Hafizh Hizbullah",
+      "nim": "2501012010"
+    },
+    {
+      "nama": "Muhammad Dzaki",
+      "nim": "2501012016"
+    },
+    {
+      "nama": "Arafah Febra Nesti",
+      "nim": "2501012022"
+    },
+    {
+      "nama": "Farrel Gavrila",
+      "nim": "2501012034"
+    },
+    {
+      "nama": "Faisal Hamzah",
+      "nim": "2501012040"
+    },
+    {
+      "nama": "Muhammad Iqbal",
+      "nim": "2501012046"
+    },
+    {
+      "nama": "Hafid Jalil Al Ghifari Asrul",
+      "nim": "2501012058"
+    },
+    {
+      "nama": "Alvin Khaira",
+      "nim": "2501012064"
+    },
+    {
+      "nama": "Dimas Prasetyo",
+      "nim": "2501013004"
+    },
+    {
+      "nama": "Willy Putra Andhika",
+      "nim": "2501013010"
+    },
+    {
+      "nama": "Geovani Silitonga",
+      "nim": "2501013016"
+    },
+    {
+      "nama": "Nahidl Silmy Alkhoironi",
+      "nim": "2501013022"
+    },
+    {
+      "nama": "Muhammad Aqil Athallah",
+      "nim": "2501013028"
+    },
+    {
+      "nama": "Denora Saputra",
+      "nim": "2501013034"
+    },
+    {
+      "nama": "Qadhafi Al Hakim",
+      "nim": "2501013040"
+    },
+    {
+      "nama": "Syahdian Putra",
+      "nim": "2501013046"
+    },
+    {
+      "nama": "Muhammad Fachri Ramadhan",
+      "nim": "2501013052"
+    },
+    {
+      "nama": "Satria Fabiano",
+      "nim": "2501013024"
+    },
+    {
+      "nama": "Muhamad Ikhsan Agusti",
+      "nim": "2501013042"
+    },
+    {
+      "nama": "Hafizh Maulana",
+      "nim": "2501013055"
+    }
+  ],
+  "d3tm:2E": [
+    {
+      "nama": "Bima Maulana",
+      "nim": "2501011005"
+    },
+    {
+      "nama": "Marsel Pratama",
+      "nim": "2501011011"
+    },
+    {
+      "nama": "Hengki Ramadhani",
+      "nim": "2501011017"
+    },
+    {
+      "nama": "Aushaf Ravi",
+      "nim": "2501011023"
+    },
+    {
+      "nama": "Afdhalul Zikri",
+      "nim": "2501011029"
+    },
+    {
+      "nama": "Muhammad Arya Farras",
+      "nim": "2501011035"
+    },
+    {
+      "nama": "Arjunaldi Putra",
+      "nim": "2501011040"
+    },
+    {
+      "nama": "Marcelino Saputra",
+      "nim": "2501012004"
+    },
+    {
+      "nama": "Naufa Faros",
+      "nim": "2501012005"
+    },
+    {
+      "nama": "Gean Yuhandes",
+      "nim": "2501012011"
+    },
+    {
+      "nama": "Yazid Alfaruq",
+      "nim": "2501012023"
+    },
+    {
+      "nama": "Muhammad Rafi Maulana",
+      "nim": "2501012029"
+    },
+    {
+      "nama": "Gamendra Al Saddiamin",
+      "nim": "2501012035"
+    },
+    {
+      "nama": "Naysila Syahrijal",
+      "nim": "2501012041"
+    },
+    {
+      "nama": "Kresna Pratama",
+      "nim": "2501012047"
+    },
+    {
+      "nama": "Rayhan Noveriz",
+      "nim": "2501012053"
+    },
+    {
+      "nama": "Muhammad Ryanda Alfariello Putra",
+      "nim": "2501012059"
+    },
+    {
+      "nama": "Hafiz Alfiandi",
+      "nim": "2501012068"
+    },
+    {
+      "nama": "Rehan Rizalmi",
+      "nim": "2501013005"
+    },
+    {
+      "nama": "Ikhram Kafka Kurniawan",
+      "nim": "2501013011"
+    },
+    {
+      "nama": "Rifky Putra Amanda",
+      "nim": "2501013017"
+    },
+    {
+      "nama": "Zhafa Zalne",
+      "nim": "2501013023"
+    },
+    {
+      "nama": "Prasetio Almi",
+      "nim": "2501013029"
+    },
+    {
+      "nama": "Muhammad Varel Briliyan",
+      "nim": "2501013035"
+    },
+    {
+      "nama": "Fathir Dwi Putra",
+      "nim": "2501013047"
+    },
+    {
+      "nama": "Risqi Maulana Sidiq",
+      "nim": "2501013053"
+    }
+  ],
+  "d3tm:2F": [
+    {
+      "nama": "Irsyad Gusman",
+      "nim": "2501012049"
+    },
+    {
+      "nama": "Naufal Dkhairullah",
+      "nim": "2501012028"
+    },
+    {
+      "nama": "Irsyad Ulfakri Azmi",
+      "nim": "2501013033"
+    },
+    {
+      "nama": "Muhammad Aidil Fajar Nasution",
+      "nim": "2501013057"
+    },
+    {
+      "nama": "Maritza Ardi",
+      "nim": "2501012065"
+    },
+    {
+      "nama": "Shodikin Harist",
+      "nim": "2501012054"
+    },
+    {
+      "nama": "Hijri Humairoh Rkt",
+      "nim": "2501012017"
+    },
+    {
+      "nama": "Muhammad Zaki Zikrullah",
+      "nim": "2501013015"
+    },
+    {
+      "nama": "Reifan Permadi",
+      "nim": "2501011013"
+    },
+    {
+      "nama": "Ferry Kurniawan",
+      "nim": "2501012031"
+    },
+    {
+      "nama": "Fadhil Pratama",
+      "nim": "2501012037"
+    },
+    {
+      "nama": "Hafidh Dzikry",
+      "nim": "2501011043"
+    },
+    {
+      "nama": "Revand Fauzi",
+      "nim": "2501012014"
+    },
+    {
+      "nama": "Dzaky Fajar Zainal",
+      "nim": "2501012030"
+    },
+    {
+      "nama": "Marsya Mecca Tiloa",
+      "nim": "2501011006"
+    },
+    {
+      "nama": "Hayaty Qira'atil Hasanah",
+      "nim": "2501012007"
+    },
+    {
+      "nama": "Farel Yuliandra Putera",
+      "nim": "2501013001"
+    },
+    {
+      "nama": "Habbi Malhaqi",
+      "nim": "2501012033"
+    },
+    {
+      "nama": "Olvan Ermanda",
+      "nim": "2501013036"
+    },
+    {
+      "nama": "Muhammad Ashif Hudzaifah",
+      "nim": "2501012008"
+    },
+    {
+      "nama": "Muhammad Akbar Rizki",
+      "nim": "2501012001"
+    },
+    {
+      "nama": "Haqiqi Rahman",
+      "nim": "2501013043"
+    }
+  ]
+};
+
+let state = {
+  role: 'admin', // 'admin' | 'ketua'
+  prodi: PRODI[0].key,
+  kelas: PRODI[0].kelas[0],
+  tab: 'mahasiswa', // mahasiswa | matkul | upload | rekap
+  students: [],
+  matkul: [],
+  scans: [],
+  rekap: {},   // scanId -> { studentId: statusCode }
+  loading: true,
+  modal: null, // { type:'image', url } | { type:'rekap', scan }
+  summaryMatkulId: null,
+};
+
+function currentProdi(){ return PRODI.find(p=>p.key===state.prodi); }
+function keyBase(){ return state.prodi+':'+state.kelas; }
+
+async function loadClass(){
+  state.loading = true; render();
+  const base = keyBase();
+  const [rosterRes, matkul, scans, rekap] = await Promise.all([
+    safeGetRaw('roster:'+base),
+    safeGet('matkul:'+base, []),
+    safeGet('scans:'+base, []),
+    safeGet('rekap:'+base, {}),
+  ]);
+  if(rosterRes.found){
+    state.students = rosterRes.value;
+  } else if(SEED_STUDENTS[base]){
+    // first time this class is opened: pre-fill with the official roster provided
+    state.students = SEED_STUDENTS[base].map(s=>({id:uid(), nama:s.nama, nim:s.nim}));
+    await saveStudents();
+  } else {
+    state.students = [];
+  }
+  state.matkul = matkul;
+  state.scans = scans;
+  state.rekap = rekap;
+  state.loading = false;
+  render();
+}
+async function safeGet(key, fallback){
+  const r = await safeGetRaw(key);
+  return r.found ? r.value : fallback;
+}
+async function safeGetRaw(key){
+  try{
+    const r = await window.storage.get(key, true);
+    if(r && r.value) return { found:true, value: JSON.parse(r.value) };
+    return { found:false, value:null };
+  }catch(e){ return { found:false, value:null }; }
+}
+async function saveStudents(){ await safeSet('roster:'+keyBase(), state.students); }
+async function saveMatkul(){ await safeSet('matkul:'+keyBase(), state.matkul); }
+async function saveScans(){ await safeSet('scans:'+keyBase(), state.scans); }
+async function saveRekap(){ await safeSet('rekap:'+keyBase(), state.rekap); }
+async function safeSet(key, value){
+  try{
+    await window.storage.set(key, JSON.stringify(value), true);
+  }catch(e){
+    console.error('Gagal menyimpan ke storage:', key, e);
+    // Data tetap ada di memori (state) walau gagal tersimpan permanen,
+    // jadi tampilan tidak boleh berhenti hanya karena ini gagal.
+  }
+}
+
+function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
+
+/* ---------------- Render ---------------- */
+function render(){
+  renderRoleSwitch();
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    ${renderSelector()}
+    ${renderTabnav()}
+    ${state.loading ? '<div class="panel"><div class="empty-state"><div class="glyph">&#9203;</div><p>Memuat data kelas&hellip;</p></div></div>' : renderTabContent()}
+  `;
+  attachHandlers();
+  renderModal();
+}
+
+function renderRoleSwitch(){
+  document.getElementById('roleSwitch').innerHTML = `
+    <button data-role="admin" class="${state.role==='admin'?'active':''}">Admin</button>
+    <button data-role="ketua" class="${state.role==='ketua'?'active':''}">Ketua Kelas</button>
+  `;
+}
+
+function renderSelector(){
+  const prodi = currentProdi();
+  return `
+  <div class="selector-card">
+    <div class="selector-row">
+      <div class="selector-group">
+        <span class="selector-label">Program Studi</span>
+        <div class="prodi-tabs">
+          ${PRODI.map(p=>`
+            <button class="prodi-tab ${p.key===state.prodi?'active':''}" data-prodi="${p.key}">
+              <span class="code">${p.kode}</span>
+              <span>${p.nama}</span>
+            </button>`).join('')}
+        </div>
+      </div>
+      <div class="selector-group" style="max-width:420px;">
+        <span class="selector-label">Kelas &mdash; ${prodi.nama}</span>
+        <div class="kelas-chips">
+          ${prodi.kelas.map(k=>`<button class="kelas-chip ${k===state.kelas?'active':''}" data-kelas="${k}">${k}</button>`).join('')}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderTabnav(){
+  const tabs = [
+    {id:'mahasiswa', label:'Data Mahasiswa'},
+    {id:'matkul', label:'Mata Kuliah'},
+    {id:'upload', label:'Upload Absensi'},
+    {id:'rekap', label:'Rekap Kehadiran'},
+  ];
+  return `<div class="tabnav">
+    ${tabs.map(t=>`<button class="${state.tab===t.id?'active':''}" data-tab="${t.id}">${t.label}</button>`).join('')}
+  </div>`;
+}
+
+function renderTabContent(){
+  if(state.tab==='mahasiswa') return renderMahasiswa();
+  if(state.tab==='matkul') return renderMatkul();
+  if(state.tab==='upload') return renderUpload();
+  if(state.tab==='rekap') return renderRekap();
+  return '';
+}
+
+/* ---- Mahasiswa ---- */
+function renderMahasiswa(){
+  const rows = state.students.map((s,i)=>`
+    <tr>
+      <td class="mono">${i+1}</td>
+      <td>${escapeHtml(s.nama)}</td>
+      <td class="nim">${escapeHtml(s.nim)}</td>
+      <td>
+        <button class="btn btn-ghost btn-sm" data-edit-student="${s.id}">Edit</button>
+        <button class="btn btn-danger-ghost btn-sm" data-del-student="${s.id}">Hapus</button>
+      </td>
+    </tr>`).join('');
+  return `
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Daftar Mahasiswa &mdash; Kelas ${state.kelas}</h2>
+        <p>${state.students.length} mahasiswa terdaftar</p>
+      </div>
+    </div>
+    <form id="addStudentForm" class="field-row" style="margin-bottom:16px;">
+      <div class="field"><label>Nama</label><input name="nama" placeholder="Nama lengkap" required></div>
+      <div class="field"><label>NIM</label><input name="nim" placeholder="Contoh: 2301021045" required></div>
+      <button class="btn btn-primary" type="submit">+ Tambah Mahasiswa</button>
+      <button type="button" class="btn btn-ghost" id="toggleImportBtn">Impor massal &darr;</button>
+    </form>
+    <div id="importBox" style="display:none; margin-bottom:16px;">
+      <form id="importStudentForm">
+        <div class="field" style="width:100%;">
+          <label>Tempel daftar (satu mahasiswa per baris, format: Nama, NIM)</label>
+          <textarea name="bulk" rows="6" placeholder="Rahmat Al Hamid, 2501011007&#10;Quiza Ananda Irawan, 2501011019" style="width:100%; border:1px solid var(--line-strong); border-radius:7px; padding:8px 10px; font-size:13px; font-family:'IBM Plex Mono'; background:var(--paper);"></textarea>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="btn btn-accent" type="submit">Impor Sekarang</button>
+          <button class="btn btn-ghost" type="button" id="cancelImportBtn">Batal</button>
+        </div>
+        <p class="note" style="margin-top:10px;">Pemisah nama &amp; NIM boleh koma, titik koma, atau tab. Daftar yang diimpor akan <strong>ditambahkan</strong> ke daftar yang sudah ada (bukan menimpa).</p>
+      </form>
+    </div>
+    ${state.students.length ? `
+      <table>
+        <thead><tr><th style="width:40px;">No</th><th>Nama</th><th>NIM</th><th style="width:130px;">Aksi</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>` : `
+      <div class="empty-state">
+        <div class="glyph">&#128203;</div>
+        <h3>Belum ada mahasiswa</h3>
+        <p>Tambahkan mahasiswa kelas ${state.kelas} lewat form di atas.</p>
+      </div>`}
+  </div>`;
+}
+
+/* ---- Mata Kuliah ---- */
+function renderMatkul(){
+  return `
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Mata Kuliah &mdash; Kelas ${state.kelas}</h2>
+        <p>Daftar mata kuliah yang diabsen untuk kelas ini</p>
+      </div>
+    </div>
+    <form id="addMatkulForm" class="field-row">
+      <div class="field" style="flex:1;"><label>Nama Mata Kuliah</label><input name="nama" placeholder="Contoh: Menggambar Teknik" required></div>
+      <button class="btn btn-primary" type="submit">+ Tambah</button>
+    </form>
+    ${state.matkul.length ? `
+      <div class="chip-list">
+        ${state.matkul.map(m=>`
+          <div class="matkul-chip">${escapeHtml(m.nama)} <button data-del-matkul="${m.id}" title="Hapus">&times;</button></div>
+        `).join('')}
+      </div>` : `
+      <div class="empty-state">
+        <div class="glyph">&#128218;</div>
+        <h3>Belum ada mata kuliah</h3>
+        <p>Tambahkan mata kuliah untuk kelas ${state.kelas} di atas.</p>
+      </div>`}
+  </div>`;
+}
+
+/* ---- Upload Absensi ---- */
+function renderUpload(){
+  const uploadForm = state.role==='ketua' ? `
+    <form id="uploadScanForm" class="field-row" style="margin-bottom:18px;">
+      <div class="field">
+        <label>Mata Kuliah</label>
+        <select name="matkulId" required ${state.matkul.length?'':'disabled'}>
+          <option value="">${state.matkul.length? 'Pilih mata kuliah' : 'Belum ada matkul'}</option>
+          ${state.matkul.map(m=>`<option value="${m.id}">${escapeHtml(m.nama)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Tanggal</label><input type="date" name="tanggal" required value="${todayStr()}"></div>
+      <div class="field"><label>Scan Absensi (foto/gambar)</label><input type="file" name="file" accept="image/*" required></div>
+      <button class="btn btn-accent" type="submit" ${state.matkul.length?'':'disabled'}>&#8593; Upload Scan</button>
+    </form>
+    ${!state.matkul.length ? '<div class="note">Tambahkan mata kuliah dulu di tab "Mata Kuliah" sebelum bisa upload scan.</div>' : ''}
+  ` : `
+    <div class="note">Mode Admin: hanya menampilkan scan yang sudah diunggah oleh ketua kelas. Upload dilakukan oleh Ketua Kelas.</div>
+  `;
+
+  const sorted = [...state.scans].sort((a,b)=> b.tanggal.localeCompare(a.tanggal));
+  const cards = sorted.map(sc=>`
+    <div class="scan-card">
+      <img class="scan-thumb" src="${sc.dataUrl}" data-view-image="${sc.id}" alt="Scan absensi ${escapeHtml(sc.matkulNama)}">
+      <div class="scan-meta">
+        <p class="mk">${escapeHtml(sc.matkulNama)}</p>
+        <p class="dt">${formatDate(sc.tanggal)}</p>
+        <span class="stamp ${sc.direkap?'stamp-done':'stamp-pending'}">${sc.direkap?'Sudah direkap':'Belum direkap'}</span>
+        <div class="scan-actions" style="margin-top:8px;">
+          <button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat</button>
+          <button class="btn btn-danger-ghost btn-sm" data-del-scan="${sc.id}">Hapus</button>
+        </div>
+      </div>
+    </div>`).join('');
+
+  return `
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Upload Absensi &mdash; Kelas ${state.kelas}</h2>
+        <p>Scan lembar absensi per mata kuliah, per pertemuan</p>
+      </div>
+    </div>
+    ${uploadForm}
+    ${sorted.length ? `<div class="scan-grid">${cards}</div>` : `
+      <div class="empty-state">
+        <div class="glyph">&#128247;</div>
+        <h3>Belum ada scan diunggah</h3>
+        <p>Ketua kelas dapat mengunggah scan absensi lewat form di atas.</p>
+      </div>`}
+  </div>`;
+}
+
+/* ---- Rekap Kehadiran ---- */
+function renderRekap(){
+  const total = state.scans.length;
+  const done = state.scans.filter(s=>s.direkap).length;
+  const pending = total-done;
+
+  const stat = `
+  <div class="stat-row">
+    <div class="stat-box"><div class="num">${total}</div><div class="lab">Total Scan</div></div>
+    <div class="stat-box"><div class="num">${done}</div><div class="lab">Sudah Direkap</div></div>
+    <div class="stat-box"><div class="num">${pending}</div><div class="lab">Belum Direkap</div></div>
+  </div>`;
+
+  const sorted = [...state.scans].sort((a,b)=> b.tanggal.localeCompare(a.tanggal));
+  const listRows = sorted.map(sc=>`
+    <tr>
+      <td>${formatDate(sc.tanggal)}</td>
+      <td>${escapeHtml(sc.matkulNama)}</td>
+      <td><span class="stamp ${sc.direkap?'stamp-done':'stamp-pending'}">${sc.direkap?'Sudah':'Belum'}</span></td>
+      <td>
+        <button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat scan</button>
+        ${state.role==='admin' ? `<button class="btn btn-primary btn-sm" data-open-rekap="${sc.id}">${sc.direkap?'Edit rekap':'Isi rekap'}</button>` : ''}
+      </td>
+    </tr>`).join('');
+
+  const listPanel = `
+  <div class="panel">
+    <div class="panel-head">
+      <div><h2>Daftar Scan &mdash; Kelas ${state.kelas}</h2><p>${state.role==='admin' ? 'Klik "Isi rekap" untuk mencatat kehadiran berdasarkan scan.' : 'Status rekap kehadiran per pertemuan.'}</p></div>
+    </div>
+    ${total ? `<table><thead><tr><th>Tanggal</th><th>Mata Kuliah</th><th>Status</th><th style="width:220px;">Aksi</th></tr></thead><tbody>${listRows}</tbody></table>` :
+      `<div class="empty-state"><div class="glyph">&#128203;</div><h3>Belum ada scan</h3><p>Rekap akan muncul setelah ketua kelas mengunggah scan absensi.</p></div>`}
+  </div>`;
+
+  const summaryPanel = renderSummaryMatrix();
+
+  return stat + listPanel + summaryPanel;
+}
+
+function renderSummaryMatrix(){
+  if(!state.students.length || !state.matkul.length){
+    return `<div class="panel"><div class="panel-head"><div><h2>Rekap Absensi</h2><p>Format No, BP, Nama, S, I, A, Jumlah, PKTOS</p></div></div>
+      <div class="empty-state"><div class="glyph">&#128202;</div><h3>Belum bisa ditampilkan</h3><p>Lengkapi data mahasiswa dan mata kuliah terlebih dahulu.</p></div></div>`;
+  }
+  if(!state.summaryMatkulId || !state.matkul.find(m=>m.id===state.summaryMatkulId)){
+    state.summaryMatkulId = state.matkul[0].id;
+  }
+  const matkulOptions = state.matkul.map(m=>`<option value="${m.id}" ${m.id===state.summaryMatkulId?'selected':''}>${escapeHtml(m.nama)}</option>`).join('');
+
+  const scansM = state.scans.filter(s=>s.matkulId===state.summaryMatkulId && s.direkap);
+  const totalPertemuan = scansM.length;
+
+  const rows = state.students.map((st,i)=>{
+    let S=0,I=0,A=0;
+    scansM.forEach(sc=>{
+      const r = state.rekap[sc.id];
+      const status = r ? r[st.id] : null;
+      if(status==='S') S++;
+      else if(status==='I') I++;
+      else if(status==='A') A++;
+    });
+    const jumlah = S+I+A;
+    const pktos = totalPertemuan ? ((jumlah/totalPertemuan)*100).toFixed(1)+'%' : '&mdash;';
+    return `<tr>
+      <td class="mono" style="text-align:center;">${i+1}</td>
+      <td class="nim" style="text-align:center;">${escapeHtml(st.nim)}</td>
+      <td>${escapeHtml(st.nama)}</td>
+      <td class="mono" style="text-align:center;">${S}</td>
+      <td class="mono" style="text-align:center;">${I}</td>
+      <td class="mono" style="text-align:center;">${A}</td>
+      <td class="mono" style="text-align:center; font-weight:700;">${jumlah}</td>
+      <td class="mono" style="text-align:center;">${pktos}</td>
+      <td class="mono" style="text-align:center; font-weight:700;">${jumlah}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+  <div class="panel">
+    <div class="panel-head">
+      <div><h2>Rekap Absensi &mdash; Kelas ${state.kelas}</h2><p>S = Sakit &middot; I = Izin &middot; A = Alpa &middot; PKTOS = persentase ketidakhadiran (S+I+A &divide; jumlah pertemuan yang direkap)</p></div>
+    </div>
+    <div class="field" style="max-width:320px; margin-bottom:14px;">
+      <label>Mata Kuliah</label>
+      <select id="summaryMatkulSelect">${matkulOptions}</select>
+    </div>
+    ${totalPertemuan ? '' : `<div class="note">Belum ada pertemuan yang direkap untuk mata kuliah ini. Angka akan muncul setelah admin mengisi rekap dari scan.</div>`}
+    <div style="overflow-x:auto;">
+      <table class="excel-table">
+        <thead>
+          <tr>
+            <th rowspan="2">No</th>
+            <th rowspan="2">BP</th>
+            <th rowspan="2">NAMA</th>
+            <th colspan="3">JUMLAH</th>
+            <th rowspan="2">JUMLAH</th>
+            <th rowspan="2">PKTOS</th>
+            <th rowspan="2">JUMLAH<br>TOTAL</th>
+          </tr>
+          <tr>
+            <th>S</th><th>I</th><th>A</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="note">Total pertemuan yang sudah direkap untuk mata kuliah ini: <strong>${totalPertemuan}</strong>.</p>
+  </div>`;
+}
+
+/* ---------------- Modal ---------------- */
+function renderModal(){
+  let existing = document.getElementById('modalRoot');
+  if(existing) existing.remove();
+  if(!state.modal) return;
+
+  const root = document.createElement('div');
+  root.id = 'modalRoot';
+  document.body.appendChild(root);
+
+  if(state.modal.type==='image'){
+    const sc = state.scans.find(s=>s.id===state.modal.id);
+    if(!sc){ state.modal=null; return; }
+    root.innerHTML = `
+      <div class="modal-overlay" data-close-modal="1">
+        <div class="modal" onclick="event.stopPropagation()">
+          <div class="modal-head"><h3>${escapeHtml(sc.matkulNama)} &middot; ${formatDate(sc.tanggal)}</h3><button class="modal-close" data-close-modal="1">&times;</button></div>
+          <div class="modal-body"><img class="full" src="${sc.dataUrl}" alt="Scan absensi"></div>
+        </div>
+      </div>`;
+  }
+
+  if(state.modal.type==='rekap'){
+    const sc = state.scans.find(s=>s.id===state.modal.id);
+    if(!sc){ state.modal=null; return; }
+    const existingRekap = state.rekap[sc.id] || {};
+    const rows = state.students.map((st,i)=>`
+      <tr>
+        <td class="mono">${i+1}</td>
+        <td>${escapeHtml(st.nama)}</td>
+        <td class="nim">${escapeHtml(st.nim)}</td>
+        <td>
+          <div class="status-group">
+            ${STATUS.map(op=>`
+              <label class="status-opt">
+                <input type="radio" name="st_${st.id}" value="${op.code}" ${(existingRekap[st.id]||'H')===op.code?'checked':''}>
+                <span class="${op.code}">${op.code}</span>
+              </label>`).join('')}
+          </div>
+        </td>
+      </tr>`).join('');
+
+    root.innerHTML = `
+      <div class="modal-overlay" data-close-modal="1">
+        <div class="modal" onclick="event.stopPropagation()">
+          <div class="modal-head">
+            <h3>Isi Rekap &mdash; ${escapeHtml(sc.matkulNama)} &middot; ${formatDate(sc.tanggal)}</h3>
+            <button class="modal-close" data-close-modal="1">&times;</button>
+          </div>
+          <div class="modal-body">
+            <img class="full" src="${sc.dataUrl}" alt="Scan absensi">
+            ${state.students.length ? `
+            <form id="rekapForm">
+              <table>
+                <thead><tr><th style="width:34px;">No</th><th>Nama</th><th>NIM</th><th style="width:190px;">Status</th></tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+              <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+                <button type="button" class="btn btn-ghost" data-close-modal="1">Batal</button>
+                <button type="submit" class="btn btn-primary">Simpan Rekap</button>
+              </div>
+            </form>` : `<div class="empty-state"><p>Belum ada data mahasiswa di kelas ini.</p></div>`}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  root.querySelectorAll('[data-close-modal]').forEach(el=> el.addEventListener('click', ()=>{ state.modal=null; renderModal(); }));
+  const rekapForm = document.getElementById('rekapForm');
+  if(rekapForm){
+    rekapForm.addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const scanId = state.modal.id;
+      const result = {};
+      state.students.forEach(st=>{
+        const checked = rekapForm.querySelector(`input[name="st_${st.id}"]:checked`);
+        result[st.id] = checked ? checked.value : 'H';
+      });
+      state.rekap[scanId] = result;
+      const scan = state.scans.find(s=>s.id===scanId);
+      if(scan) scan.direkap = true;
+      state.modal = null;
+      render();
+      saveRekap(); saveScans();
+    });
+  }
+}
+
+/* ---------------- Handlers ---------------- */
+function attachHandlers(){
+  document.querySelectorAll('[data-role]').forEach(b=> b.addEventListener('click', ()=>{ state.role=b.dataset.role; render(); }));
+  document.querySelectorAll('[data-prodi]').forEach(b=> b.addEventListener('click', ()=>{
+    state.prodi = b.dataset.prodi;
+    state.kelas = currentProdi().kelas[0];
+    loadClass();
+  }));
+  document.querySelectorAll('[data-kelas]').forEach(b=> b.addEventListener('click', ()=>{ state.kelas=b.dataset.kelas; loadClass(); }));
+  document.querySelectorAll('[data-tab]').forEach(b=> b.addEventListener('click', ()=>{ state.tab=b.dataset.tab; render(); }));
+
+  const addStudentForm = document.getElementById('addStudentForm');
+  if(addStudentForm) addStudentForm.addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const fd = new FormData(addStudentForm);
+    const nama = fd.get('nama').trim(), nim = fd.get('nim').trim();
+    if(!nama||!nim) return;
+    state.students.push({id:uid(), nama, nim});
+    render();
+    saveStudents();
+  });
+  const toggleImportBtn = document.getElementById('toggleImportBtn');
+  const importBox = document.getElementById('importBox');
+  if(toggleImportBtn) toggleImportBtn.addEventListener('click', ()=>{ importBox.style.display = importBox.style.display==='none' ? 'block' : 'none'; });
+  const cancelImportBtn = document.getElementById('cancelImportBtn');
+  if(cancelImportBtn) cancelImportBtn.addEventListener('click', ()=>{ importBox.style.display='none'; });
+  const importStudentForm = document.getElementById('importStudentForm');
+  if(importStudentForm) importStudentForm.addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const raw = new FormData(importStudentForm).get('bulk') || '';
+    const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
+    let added = 0;
+    lines.forEach(line=>{
+      const parts = line.split(/\t|,|;/).map(p=>p.trim()).filter(Boolean);
+      if(parts.length<2) return;
+      const nim = parts.find(p=>/^\d{6,}$/.test(p));
+      const nama = parts.filter(p=>p!==nim).join(' ');
+      if(!nim || !nama) return;
+      state.students.push({id:uid(), nama, nim});
+      added++;
+    });
+    if(!added) alert('Tidak ada baris valid ditemukan. Pastikan format: Nama, NIM');
+    render();
+    if(added) saveStudents();
+  });
+  document.querySelectorAll('[data-del-student]').forEach(b=> b.addEventListener('click', ()=>{
+    if(!confirm('Hapus mahasiswa ini?')) return;
+    state.students = state.students.filter(s=>s.id!==b.dataset.delStudent);
+    render();
+    saveStudents();
+  }));
+  document.querySelectorAll('[data-edit-student]').forEach(b=> b.addEventListener('click', ()=>{
+    const st = state.students.find(s=>s.id===b.dataset.editStudent);
+    if(!st) return;
+    const nama = prompt('Nama:', st.nama); if(nama===null) return;
+    const nim = prompt('NIM:', st.nim); if(nim===null) return;
+    st.nama = nama.trim()||st.nama; st.nim = nim.trim()||st.nim;
+    render();
+    saveStudents();
+  }));
+
+  const addMatkulForm = document.getElementById('addMatkulForm');
+  if(addMatkulForm) addMatkulForm.addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const fd = new FormData(addMatkulForm);
+    const nama = fd.get('nama').trim();
+    if(!nama) return;
+    state.matkul.push({id:uid(), nama});
+    render();
+    saveMatkul();
+  });
+  document.querySelectorAll('[data-del-matkul]').forEach(b=> b.addEventListener('click', ()=>{
+    if(!confirm('Hapus mata kuliah ini?')) return;
+    state.matkul = state.matkul.filter(m=>m.id!==b.dataset.delMatkul);
+    render();
+    saveMatkul();
+  }));
+
+  const uploadForm = document.getElementById('uploadScanForm');
+  if(uploadForm) uploadForm.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const fd = new FormData(uploadForm);
+    const matkulId = fd.get('matkulId');
+    const tanggal = fd.get('tanggal');
+    const file = fd.get('file');
+    if(!matkulId || !tanggal || !file || !file.size){ alert('Lengkapi semua isian.'); return; }
+    const mk = state.matkul.find(m=>m.id===matkulId);
+    const submitBtn = uploadForm.querySelector('button[type="submit"]');
+    submitBtn.disabled = true; submitBtn.textContent = 'Mengunggah...';
+    try{
+      const dataUrl = await compressImage(file);
+      state.scans.push({ id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, dataUrl, uploadedAt:new Date().toISOString(), direkap:false });
+      render();
+      saveScans();
+    }catch(err){
+      alert('Gagal memproses gambar. Coba file lain.');
+      submitBtn.disabled=false; submitBtn.textContent='↑ Upload Scan';
+    }
+  });
+  document.querySelectorAll('[data-del-scan]').forEach(b=> b.addEventListener('click', ()=>{
+    if(!confirm('Hapus scan ini beserta rekapnya?')) return;
+    const id = b.dataset.delScan;
+    state.scans = state.scans.filter(s=>s.id!==id);
+    delete state.rekap[id];
+    render();
+    saveScans(); saveRekap();
+  }));
+  document.querySelectorAll('[data-view-image]').forEach(b=> b.addEventListener('click', ()=>{
+    state.modal = { type:'image', id:b.dataset.viewImage };
+    renderModal();
+  }));
+  document.querySelectorAll('[data-open-rekap]').forEach(b=> b.addEventListener('click', ()=>{
+    state.modal = { type:'rekap', id:b.dataset.openRekap };
+    renderModal();
+  }));
+  const summaryMatkulSelect = document.getElementById('summaryMatkulSelect');
+  if(summaryMatkulSelect) summaryMatkulSelect.addEventListener('change', ()=>{
+    state.summaryMatkulId = summaryMatkulSelect.value;
+    render();
+  });
+}
+
+/* ---------------- Utils ---------------- */
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+function formatDate(d){
+  const dt = new Date(d+'T00:00:00');
+  return dt.toLocaleDateString('id-ID', {day:'2-digit', month:'short', year:'numeric'});
+}
+function compressImage(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const maxDim = 1200;
+        let w = img.width, h = img.height;
+        if(w>maxDim || h>maxDim){
+          if(w>h){ h = Math.round(h*maxDim/w); w = maxDim; }
+          else { w = Math.round(w*maxDim/h); h = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0,0,w,h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.72));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+loadClass();
+</script>
+</body>
+</html>

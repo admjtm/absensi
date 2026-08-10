@@ -287,9 +287,9 @@
 
 <script>
 const PRODI = [
-  { key:'d3tm',   kode:'D3-TME',   nama:'D3 Teknik Mesin',                  kelas: kelasD3() },
+  { key:'d3tm',   kode:'D3-TM',   nama:'D3 Teknik Mesin',                  kelas: kelasD3() },
   { key:'d3tab',  kode:'D3-TAB',  nama:'D3 Teknik Alat Berat',             kelas: kelasD3() },
-  { key:'d4tmpr', kode:'D4-TMA', nama:'D4 Teknik Manufaktur',             kelas: kelasD4() },
+  { key:'d4tmpr', kode:'D4-TMPR', nama:'D4 Teknik Manufaktur',             kelas: kelasD4() },
   { key:'d4rpm',  kode:'D4-RPM',  nama:'D4 Rekayasa Perancangan Mekanik',  kelas: kelasD4() },
 ];
 function kelasD3(){ const t=[]; for(let tk=1;tk<=3;tk++) for(const h of ['A','B','C','D','E','F']) t.push(tk+h); return t; }
@@ -973,6 +973,7 @@ let state = {
   loading: true,
   modal: null, // { type:'image', url } | { type:'rekap', scan }
   summaryMatkulId: null,
+  summaryWeek: 1,
   semesterStart: null, // 'YYYY-MM-DD', tanggal Senin minggu pertama semester (per kelas)
 };
 
@@ -1357,32 +1358,8 @@ function renderSummaryMatrix(){
     return `<div class="panel"><div class="panel-head"><div><h2>Rekap Absensi</h2><p>Format No, BP, Nama, S, I, A, Jumlah, PKTOS</p></div></div>
       <div class="empty-state"><div class="glyph">&#128202;</div><h3>Belum bisa ditampilkan</h3><p>Lengkapi data mahasiswa dan mata kuliah terlebih dahulu.</p></div></div>`;
   }
-  if(!state.summaryMatkulId || !state.matkul.find(m=>m.id===state.summaryMatkulId)){
-    state.summaryMatkulId = state.matkul[0].id;
-  }
-  const matkulOptions = state.matkul.map(m=>`<option value="${m.id}" ${m.id===state.summaryMatkulId?'selected':''}>${escapeHtml(m.nama)} (${m.jam||1} jam/m)</option>`).join('');
 
-  const { jamPerPertemuan, totalPertemuan, totalJamMatkul, perStudent } = hitungRekapMatkul(state.summaryMatkulId);
-  const mkAktif = state.matkul.find(m=>m.id===state.summaryMatkulId);
-
-  const rows = state.students.map((st,i)=>{
-    const d = perStudent[st.id];
-    const pktos = 0;
-    const komp = d.Ijam*1 + d.Ajam*2 + pktos;
-    const ket = spKeterangan(d.Ajam);
-    return `<tr>
-      <td class="mono" style="text-align:center;">${i+1}</td>
-      <td class="nim" style="text-align:center;">${escapeHtml(st.nim)}</td>
-      <td>${escapeHtml(st.nama)}</td>
-      <td class="mono" style="text-align:center;">${d.Sjam}</td>
-      <td class="mono" style="text-align:center;">${d.Ijam}</td>
-      <td class="mono" style="text-align:center;">${d.Ajam}</td>
-      <td class="mono" style="text-align:center; font-weight:700;">${d.jumlahJam}</td>
-      <td class="mono" style="text-align:center;">${pktos}</td>
-      <td class="mono" style="text-align:center; font-weight:700;">${komp}</td>
-      <td style="white-space:nowrap;">${escapeHtml(ket)}</td>
-    </tr>`;
-  }).join('');
+  const weekPanel = renderWeeklyRecap();
 
   // ---- Tabel total gabungan semua mata kuliah (dalam jam) ----
   const rekapSemua = state.matkul.map(m=>hitungRekapMatkul(m.id));
@@ -1411,39 +1388,7 @@ function renderSummaryMatrix(){
     </tr>`;
   }).join('');
 
-  return `
-  <div class="panel">
-    <div class="panel-head">
-      <div><h2>Rekap Absensi per Mata Kuliah &mdash; Kelas ${state.kelas}</h2><p>S, I, A dihitung dalam <strong>jam</strong> (jumlah pertemuan &times; jam/pertemuan mata kuliah). PKTOS diisi manual oleh admin (default 0). JUMLAH KOMPENSASI = (S&times;0)+(I&times;1)+(A&times;2)+PKTOS.</p></div>
-    </div>
-    <div class="field" style="max-width:360px; margin-bottom:14px;">
-      <label>Mata Kuliah</label>
-      <select id="summaryMatkulSelect">${matkulOptions}</select>
-    </div>
-    ${totalPertemuan ? '' : `<div class="note">Belum ada pertemuan yang direkap untuk mata kuliah ini. Angka akan muncul setelah admin mengisi rekap dari scan.</div>`}
-    <div style="overflow-x:auto;">
-      <table class="excel-table">
-        <thead>
-          <tr>
-            <th rowspan="2">No</th>
-            <th rowspan="2">BP</th>
-            <th rowspan="2">NAMA</th>
-            <th colspan="3">JAM (S / I / A)</th>
-            <th rowspan="2">JUMLAH<br>JAM</th>
-            <th rowspan="2">PKTOS</th>
-            <th rowspan="2">JUMLAH<br>KOMPENSASI</th>
-            <th rowspan="2">KETERANGAN</th>
-          </tr>
-          <tr>
-            <th>S</th><th>I</th><th>A</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-    <p class="note">Mata kuliah ${escapeHtml(mkAktif?mkAktif.nama:'')}: ${jamPerPertemuan} jam/pertemuan &middot; ${totalPertemuan} pertemuan direkap &middot; total ${totalJamMatkul} jam.</p>
-  </div>
-
+  return weekPanel + `
   <div class="panel">
     <div class="panel-head">
       <div><h2>Rekap Total Gabungan Semua Mata Kuliah &mdash; Kelas ${state.kelas}</h2><p>Jumlah jam S/I/A dari seluruh mata kuliah dijumlahkan per mahasiswa. JUMLAH KOMPENSASI &amp; KETERANGAN dihitung dari total gabungan ini.</p></div>
@@ -1478,6 +1423,116 @@ function renderSummaryMatrix(){
     ${!state.semesterStart ? `<div class="note">Atur <strong>Tanggal Mulai Semester</strong> dulu di tab "Mata Kuliah" sebelum export.</div>` : ''}
     ${!state.matkul.some(m=>m.hari) ? `<div class="note">Atur <strong>Hari</strong> untuk mata kuliah di tab "Mata Kuliah" dulu, supaya kolom mingguan tersusun benar.</div>` : ''}
     <button class="btn btn-accent" id="exportExcelBtn" ${(!state.semesterStart || !state.matkul.some(m=>m.hari) || !state.students.length) ? 'disabled' : ''}>&#8595; Export ke Excel</button>
+  </div>`;
+}
+
+// ---- Panel "Rekap per Minggu" (tampil di layar, format sama seperti export Excel) ----
+function renderWeeklyRecap(){
+  if(!state.semesterStart){
+    return `<div class="panel">
+      <div class="panel-head"><div><h2>Rekap Absensi per Minggu &mdash; Kelas ${state.kelas}</h2></div></div>
+      <div class="note">Atur <strong>Tanggal Mulai Semester</strong> dulu di tab "Mata Kuliah" supaya rekap mingguan bisa ditampilkan.</div>
+    </div>`;
+  }
+  if(!state.summaryWeek || state.summaryWeek<1 || state.summaryWeek>TOTAL_WEEKS){
+    state.summaryWeek = 1;
+  }
+  const week = state.summaryWeek;
+  const monday = weekMondayOf(week, state.semesterStart);
+  const saturday = addDaysDate(monday, 5);
+  const prevSaturday = addDaysDate(monday, -2);
+
+  const matkulByHari = {};
+  DAYS_ID.forEach(d=> matkulByHari[d] = state.matkul.filter(m=>m.hari===d));
+  const adaJadwal = state.matkul.some(m=>m.hari);
+
+  const weekOptions = Array.from({length:TOTAL_WEEKS}, (_,i)=>i+1).map(w=>{
+    const mon = weekMondayOf(w, state.semesterStart);
+    const sat = addDaysDate(mon,5);
+    return `<option value="${w}" ${w===week?'selected':''}>Minggu ${w} (${fmtDDMMYYYY(mon)} &ndash; ${fmtDDMMYYYY(sat)})</option>`;
+  }).join('');
+
+  // Header hari + matkul (colspan per hari = 3 x jumlah matkul hari itu)
+  let dayHeaderCells = '', matkulSubHeaderCells = '';
+  DAYS_ID.forEach((day,dIdx)=>{
+    const list = matkulByHari[day];
+    if(!list.length) return;
+    const dateForDay = addDaysDate(monday, dIdx);
+    dayHeaderCells += `<th colspan="${list.length*3}">${day}, ${fmtDDMMYYYY(dateForDay)}</th>`;
+    list.forEach(mk=>{
+      matkulSubHeaderCells += `<th colspan="3" style="font-weight:600;">${escapeHtml(mk.nama)}<br><span class="mono" style="font-weight:400;">${mk.jam||1} jam &middot; S/I/A</span></th>`;
+    });
+  });
+
+  const rows = state.students.map((st,i)=>{
+    let dayCells = '';
+    DAYS_ID.forEach(day=>{
+      matkulByHari[day].forEach(mk=>{
+        const cumNow = cumulativeSIA(saturday, mk.id, st.id);
+        const cumPrev = week>1 ? cumulativeSIA(prevSaturday, mk.id, st.id) : {S:0,I:0,A:0};
+        const wS=cumNow.S-cumPrev.S, wI=cumNow.I-cumPrev.I, wA=cumNow.A-cumPrev.A;
+        dayCells += `<td class="mono" style="text-align:center;">${wS||''}</td><td class="mono" style="text-align:center;">${wI||''}</td><td class="mono" style="text-align:center;">${wA||''}</td>`;
+      });
+    });
+    const total = state.matkul.reduce((acc,mk)=>{
+      const c = cumulativeSIA(saturday, mk.id, st.id);
+      acc.S+=c.S; acc.I+=c.I; acc.A+=c.A;
+      return acc;
+    },{S:0,I:0,A:0});
+    const jumlahJam = total.S+total.I+total.A;
+    const pktos = 0;
+    const komp = total.I*1 + total.A*2 + pktos;
+    const ket = spKeterangan(total.A);
+    return `<tr>
+      <td class="mono" style="text-align:center;">${i+1}</td>
+      <td class="nim" style="text-align:center;">${escapeHtml(st.nim)}</td>
+      <td>${escapeHtml(st.nama)}</td>
+      <td class="mono" style="text-align:center;">${total.S}</td>
+      <td class="mono" style="text-align:center;">${total.I}</td>
+      <td class="mono" style="text-align:center;">${total.A}</td>
+      <td class="mono" style="text-align:center; font-weight:700;">${jumlahJam}</td>
+      <td class="mono" style="text-align:center;">${pktos}</td>
+      <td class="mono" style="text-align:center; font-weight:700;">${komp}</td>
+      ${dayCells}
+      <td style="white-space:nowrap;">${escapeHtml(ket)}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Rekap Absensi per Minggu &mdash; Kelas ${state.kelas}</h2>
+        <p>Kolom JUMLAH/PKTOS/KOMPENSASI/KETERANGAN dihitung <strong>kumulatif sejak awal semester</strong> sampai akhir minggu terpilih. Kolom per mata kuliah menampilkan catatan minggu itu saja.</p>
+      </div>
+    </div>
+    <div class="field" style="max-width:340px; margin-bottom:14px;">
+      <label>Minggu</label>
+      <select id="summaryWeekSelect">${weekOptions}</select>
+    </div>
+    ${!adaJadwal ? `<div class="note">Belum ada mata kuliah yang diatur "Hari"-nya di tab "Mata Kuliah" &mdash; kolom per mata kuliah belum bisa ditampilkan.</div>` : ''}
+    <div style="overflow-x:auto;">
+      <table class="excel-table">
+        <thead>
+          <tr>
+            <th rowspan="2">No</th>
+            <th rowspan="2">BP</th>
+            <th rowspan="2">NAMA</th>
+            <th colspan="3">JUMLAH</th>
+            <th rowspan="2">JUMLAH<br>JAM</th>
+            <th rowspan="2">PKTOS</th>
+            <th rowspan="2">JUMLAH<br>KOMPENSASI</th>
+            ${dayHeaderCells}
+            <th rowspan="2">KETERANGAN</th>
+          </tr>
+          <tr>
+            <th>S</th><th>I</th><th>A</th>
+            ${matkulSubHeaderCells}
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
   </div>`;
 }
 
@@ -1695,9 +1750,9 @@ function attachHandlers(){
     state.modal = { type:'rekap', id:b.dataset.openRekap };
     renderModal();
   }));
-  const summaryMatkulSelect = document.getElementById('summaryMatkulSelect');
-  if(summaryMatkulSelect) summaryMatkulSelect.addEventListener('change', ()=>{
-    state.summaryMatkulId = summaryMatkulSelect.value;
+  const summaryWeekSelect = document.getElementById('summaryWeekSelect');
+  if(summaryWeekSelect) summaryWeekSelect.addEventListener('change', ()=>{
+    state.summaryWeek = parseInt(summaryWeekSelect.value,10);
     render();
   });
   const exportExcelBtn = document.getElementById('exportExcelBtn');

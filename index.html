@@ -988,13 +988,14 @@ const SEED_MATKUL = {
 
 // PIN untuk membuka Mode Admin -- ketua kelas tidak diberi tahu PIN ini, supaya tidak bisa
 // pindah sendiri ke mode Admin. Ganti angka ini sesuai kebutuhan.
-const ADMIN_PIN = '2025';
+const ADMIN_PIN = 'jtm1010';
 
 let state = {
-  role: 'admin', // 'admin' | 'ketua'
+  role: 'ketua', // 'admin' | 'ketua' -- tampilan awal saat website dibuka adalah Ketua Kelas;
+                 // untuk masuk Mode Admin harus klik tombol "Admin" lalu masukkan PIN.
   prodi: PRODI[0].key,
   kelas: PRODI[0].kelas[0],
-  tab: 'mahasiswa', // mahasiswa | matkul | upload | rekap
+  tab: 'upload', // mahasiswa | matkul | upload | rekap
   students: [],
   matkul: [],
   scans: [],
@@ -1284,7 +1285,8 @@ function renderMatkul(){
 
 /* ---- Upload Absensi ---- */
 function renderUpload(){
-  const uploadForm = state.role==='ketua' ? `
+  // Form upload sekarang boleh dipakai Admin maupun Ketua Kelas -- keduanya bisa unggah scan.
+  const uploadForm = `
     <form id="uploadScanForm" class="field-row" style="margin-bottom:18px;">
       <div class="field">
         <label>Mata Kuliah</label>
@@ -1298,8 +1300,6 @@ function renderUpload(){
       <button class="btn btn-accent" type="submit" ${state.matkul.length?'':'disabled'}>&#8593; Upload Scan</button>
     </form>
     ${!state.matkul.length ? '<div class="note">Tambahkan mata kuliah dulu di tab "Mata Kuliah" sebelum bisa upload scan.</div>' : ''}
-  ` : `
-    <div class="note">Mode Admin: hanya menampilkan scan yang sudah diunggah oleh ketua kelas. Upload dilakukan oleh Ketua Kelas.</div>
   `;
 
   const sorted = [...state.scans].sort((a,b)=> b.tanggal.localeCompare(a.tanggal));
@@ -1330,7 +1330,7 @@ function renderUpload(){
       <div class="empty-state">
         <div class="glyph">&#128247;</div>
         <h3>Belum ada scan diunggah</h3>
-        <p>Ketua kelas dapat mengunggah scan absensi lewat form di atas.</p>
+        <p>Admin dan Ketua Kelas dapat mengunggah scan absensi lewat form di atas.</p>
       </div>`}
   </div>`;
 }

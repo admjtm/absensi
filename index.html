@@ -988,11 +988,14 @@ const SEED_MATKUL = {
 
 // PIN untuk membuka Mode Admin -- ketua kelas tidak diberi tahu PIN ini, supaya tidak bisa
 // pindah sendiri ke mode Admin. Ganti angka ini sesuai kebutuhan.
-const ADMIN_PIN = 'jtm1010';
+const ADMIN_PIN = '2025';
 
 let state = {
   role: 'ketua', // 'admin' | 'ketua' -- tampilan awal saat website dibuka adalah Ketua Kelas;
                  // untuk masuk Mode Admin harus klik tombol "Admin" lalu masukkan PIN.
+  adminUnlocked: false, // sekali PIN benar dimasukkan, tetap "true" selama sesi/tab browser ini terbuka --
+                         // jadi pindah bolak-balik Admin <-> Ketua tidak perlu masukkan PIN berulang.
+                         // Reset ke false lagi kalau halaman di-reload/dibuka ulang.
   prodi: PRODI[0].key,
   kelas: PRODI[0].kelas[0],
   tab: 'upload', // mahasiswa | matkul | upload | rekap
@@ -1678,6 +1681,7 @@ function renderModal(){
       e.preventDefault();
       if(pinInput.value === ADMIN_PIN){
         state.role = 'admin';
+        state.adminUnlocked = true; // ingat sampai halaman ini di-reload, tidak perlu PIN lagi
         state.modal = null;
         render();
       } else {
@@ -1759,6 +1763,12 @@ function attachHandlers(){
   document.querySelectorAll('[data-role]').forEach(b=> b.addEventListener('click', ()=>{
     const target = b.dataset.role;
     if(target==='admin' && state.role!=='admin'){
+      if(state.adminUnlocked){
+        // PIN sudah pernah benar di sesi ini -> langsung masuk tanpa minta PIN lagi.
+        state.role = 'admin';
+        render();
+        return;
+      }
       // Mode Admin dikunci PIN lewat modal (bukan window.prompt, karena beberapa
       // lingkungan preview/iframe memblokir dialog prompt() bawaan browser).
       state.modal = { type:'adminPin' };

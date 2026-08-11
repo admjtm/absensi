@@ -61,7 +61,7 @@
     border-bottom:3px solid var(--accent);
   }
   .topbar-inner{
-    max-width:1180px; margin:0 auto; padding:14px 20px;
+    max-width:1720px; margin:0 auto; padding:14px 20px;
     display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
   }
   .brand{display:flex; align-items:center; gap:12px;}
@@ -88,7 +88,9 @@
   .role-switch button.active{ background:var(--accent); color:var(--primary); }
 
   /* ---------- Layout ---------- */
-  .wrap{max-width:1180px; margin:0 auto; padding:24px 20px 64px;}
+  .wrap{max-width:1720px; margin:0 auto; padding:24px 20px 64px;}
+  /* Rekap per minggu punya banyak kolom, biarkan lebih lebar dari wrap biasa agar tidak mepet */
+  .panel:has(.excel-table--fit){max-width:none;}
 
   .selector-card{
     background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
@@ -178,16 +180,27 @@
   .excel-table tbody td{padding:6px 10px;}
   .excel-table tbody tr:nth-child(even){background:#FAFBFC;}
   .excel-table tbody tr:hover{background:#EEF4FA;}
-  /* Tabel dengan banyak kolom (rekap per minggu): rata lebar, muat 1 layar, tanpa scroll samping */
+  /* Tabel dengan banyak kolom (rekap per minggu): lebar tiap kolom diatur presisi lewat <colgroup>
+     (lihat renderWeeklyRecap) memakai table-layout:fixed + width:100%, sehingga tabel selalu pas
+     memenuhi satu layar tanpa perlu digeser, dan semua kolom S/I/A ukurannya sama persis. */
+  .excel-table-scroll{
+    overflow-x:auto; overflow-y:visible; border:1px solid var(--line-strong); border-radius:8px;
+  }
   .excel-table--fit{
     table-layout:fixed; width:100%;
   }
   .excel-table--fit th, .excel-table--fit td{
-    font-size:9.5px; padding:3px 2px; word-break:break-word; overflow-wrap:break-word;
-    line-height:1.25;
+    font-size:10.5px; padding:4px 3px; overflow:hidden; text-overflow:ellipsis;
+    line-height:1.3; text-align:center; border:1px solid #444B54;
   }
-  .excel-table--fit thead th{ padding:3px 2px; font-size:9.5px; }
-  .excel-table--fit td.nim, .excel-table--fit td.mono{ font-size:9px; }
+  .excel-table--fit thead th{ padding:4px 3px; font-size:10px; text-align:center; vertical-align:middle; white-space:normal; word-break:break-word; }
+  .excel-table--fit tbody td{ white-space:nowrap; }
+  .excel-table--fit td.nim, .excel-table--fit td.mono{ font-size:10.5px; }
+  .excel-table--fit th:nth-child(3), .excel-table--fit td:nth-child(3){
+    text-align:left; white-space:normal;
+  }
+  .excel-table--fit tbody tr:nth-child(even) td{ background:#FAFBFC; }
+  .excel-table--fit td.ket-cell{ text-align:left; white-space:normal; }
   .empty-state{
     text-align:center; padding:36px 20px; color:var(--ink-soft);
   }
@@ -270,7 +283,7 @@
     font-size:12px; color:var(--ink-soft); background:var(--paper); border:1px dashed var(--line-strong);
     border-radius:8px; padding:10px 12px; margin-top:14px; line-height:1.5;
   }
-  .footer-note{max-width:1180px; margin:0 auto; padding:0 20px 40px; font-size:11.5px; color:var(--ink-soft); text-align:center;}
+  .footer-note{max-width:1720px; margin:0 auto; padding:0 20px 40px; font-size:11.5px; color:var(--ink-soft); text-align:center;}
 
   @media (max-width:640px){
     .panel{padding:18px;}
@@ -961,6 +974,8 @@ const MATKUL_SMT3_D3TM = [
   { nama:'Teknik Produksi', jam:5, hari:'Kamis' },
   { nama:'Praktek CNC', jam:5, hari:'Jumat' },
   { nama:'Praktek Produksi 1', jam:5, hari:'Jumat' },
+  { nama:'Praktek CNC', jam:5, hari:'Sabtu' },
+  { nama:'Praktek Produksi 1', jam:5, hari:'Sabtu' },
 ];
 const SEED_MATKUL = {
   'd3tm:2A': MATKUL_SMT3_D3TM,
@@ -970,6 +985,10 @@ const SEED_MATKUL = {
   'd3tm:2E': MATKUL_SMT3_D3TM,
   'd3tm:2F': MATKUL_SMT3_D3TM,
 };
+
+// PIN untuk membuka Mode Admin -- ketua kelas tidak diberi tahu PIN ini, supaya tidak bisa
+// pindah sendiri ke mode Admin. Ganti angka ini sesuai kebutuhan.
+const ADMIN_PIN = '2025';
 
 let state = {
   role: 'admin', // 'admin' | 'ketua'
@@ -1011,6 +1030,24 @@ async function loadClass(){
   }
   if(matkul && matkul.length){
     state.matkul = matkul;
+    // Migrasi otomatis: kalau kelas ini sudah pernah dibuat (data lama tersimpan) tapi belum
+    // punya jadwal hari Sabtu, sedangkan master jadwal (SEED_MATKUL) sudah punya Sabtu,
+    // tambahkan otomatis mata kuliah Sabtu yang belum ada (disamakan dengan seed terbaru).
+    if(SEED_MATKUL[base]){
+      const sudahAdaSabtu = state.matkul.some(m=>m.hari==='Sabtu');
+      if(!sudahAdaSabtu){
+        const seedSabtu = SEED_MATKUL[base].filter(m=>m.hari==='Sabtu');
+        // Cek duplikat berdasarkan (nama + hari), BUKAN nama saja -- karena nama matkul
+        // yang sama boleh muncul di lebih dari satu hari (mis. Praktek CNC di Jumat & Sabtu).
+        const kombinasiSudahAda = new Set(state.matkul.map(m=>m.nama+'|'+m.hari));
+        const tambahan = seedSabtu.filter(m=>!kombinasiSudahAda.has(m.nama+'|'+m.hari))
+          .map(m=>({id:uid(), nama:m.nama, jam:m.jam, hari:m.hari}));
+        if(tambahan.length){
+          state.matkul = [...state.matkul, ...tambahan];
+          await saveMatkul();
+        }
+      }
+    }
   } else if(SEED_MATKUL[base]){
     // first time this class is opened: pre-fill with the official matkul list (with jam/pertemuan + hari perkiraan)
     state.matkul = SEED_MATKUL[base].map(m=>({id:uid(), nama:m.nama, jam:m.jam, hari:m.hari||null}));
@@ -1104,18 +1141,26 @@ function renderSelector(){
 }
 
 function renderTabnav(){
-  const tabs = [
+  const allTabs = [
     {id:'mahasiswa', label:'Data Mahasiswa'},
     {id:'matkul', label:'Mata Kuliah'},
     {id:'upload', label:'Upload Absensi'},
     {id:'rekap', label:'Rekap Kehadiran'},
   ];
+  // Ketua kelas hanya boleh mengunggah scan absensi dan melihat rekapan --
+  // tidak boleh mengubah data mahasiswa maupun mata kuliah (itu wewenang Admin).
+  const tabs = state.role==='ketua' ? allTabs.filter(t=>t.id==='upload'||t.id==='rekap') : allTabs;
   return `<div class="tabnav">
     ${tabs.map(t=>`<button class="${state.tab===t.id?'active':''}" data-tab="${t.id}">${t.label}</button>`).join('')}
   </div>`;
 }
 
 function renderTabContent(){
+  // Proteksi tambahan: kalau Ketua Kelas nyasar ke tab mahasiswa/matkul (mis. lewat state lama),
+  // paksa balik ke tab upload -- bukan cuma disembunyikan tombolnya di navigasi.
+  if(state.role==='ketua' && (state.tab==='mahasiswa' || state.tab==='matkul')){
+    state.tab = 'upload';
+  }
   if(state.tab==='mahasiswa') return renderMahasiswa();
   if(state.tab==='matkul') return renderMatkul();
   if(state.tab==='upload') return renderUpload();
@@ -1267,7 +1312,7 @@ function renderUpload(){
         <span class="stamp ${sc.direkap?'stamp-done':'stamp-pending'}">${sc.direkap?'Sudah direkap':'Belum direkap'}</span>
         <div class="scan-actions" style="margin-top:8px;">
           <button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat</button>
-          <button class="btn btn-danger-ghost btn-sm" data-del-scan="${sc.id}">Hapus</button>
+          ${state.role==='admin' ? `<button class="btn btn-danger-ghost btn-sm" data-del-scan="${sc.id}">Hapus</button>` : ''}
         </div>
       </div>
     </div>`).join('');
@@ -1383,7 +1428,6 @@ function renderSummaryMatrix(){
     const jumlah = S+I+A;
     const pktos = 0;
     const komp = I*1 + A*2 + pktos;
-    const ket = spKeterangan(A);
     return `<tr>
       <td class="mono" style="text-align:center;">${i+1}</td>
       <td class="nim" style="text-align:center;">${escapeHtml(st.nim)}</td>
@@ -1394,14 +1438,13 @@ function renderSummaryMatrix(){
       <td class="mono" style="text-align:center; font-weight:700;">${jumlah}</td>
       <td class="mono" style="text-align:center;">${pktos}</td>
       <td class="mono" style="text-align:center; font-weight:700;">${komp}</td>
-      <td style="white-space:nowrap;">${escapeHtml(ket)}</td>
     </tr>`;
   }).join('');
 
   return weekPanel + `
   <div class="panel">
     <div class="panel-head">
-      <div><h2>Rekap Total Gabungan Semua Mata Kuliah &mdash; Kelas ${state.kelas}</h2><p>Jumlah jam S/I/A dari seluruh mata kuliah dijumlahkan per mahasiswa. JUMLAH KOMPENSASI &amp; KETERANGAN dihitung dari total gabungan ini.</p></div>
+      <div><h2>Rekap Total Gabungan Semua Mata Kuliah &mdash; Kelas ${state.kelas}</h2><p>Jumlah jam S/I/A dari seluruh mata kuliah dijumlahkan per mahasiswa. JUMLAH KOMPENSASI dihitung dari total gabungan ini.</p></div>
     </div>
     <div style="overflow-x:auto;">
       <table class="excel-table">
@@ -1414,7 +1457,6 @@ function renderSummaryMatrix(){
             <th rowspan="2">JUMLAH<br>JAM</th>
             <th rowspan="2">PKTOS</th>
             <th rowspan="2">JUMLAH<br>KOMPENSASI</th>
-            <th rowspan="2">KETERANGAN</th>
           </tr>
           <tr>
             <th>S</th><th>I</th><th>A</th>
@@ -1463,25 +1505,59 @@ function renderWeeklyRecap(){
   }).join('');
 
   // Header hari + matkul (colspan per hari = 3 x jumlah matkul hari itu)
-  let dayHeaderCells = '', matkulSubHeaderCells = '';
+  // 3 tingkat header: (1) hari+tanggal, (2) nama matkul, (3) S/I/A per matkul — supaya sejajar dengan body
+  // Semua 6 hari (Senin s/d Sabtu) SELALU ditampilkan; hari tanpa mata kuliah tetap punya 1 kolom
+  // placeholder supaya tabel konsisten memuat penuh sampai Sabtu.
+  let dayHeaderCells = '', matkulSubHeaderCells = '', matkulSIACells = '';
+  let jumlahMatkulTampil = 0, jumlahHariKosong = 0;
   DAYS_ID.forEach((day,dIdx)=>{
     const list = matkulByHari[day];
-    if(!list.length) return;
     const dateForDay = addDaysDate(monday, dIdx);
+    if(!list.length){
+      jumlahHariKosong++;
+      dayHeaderCells += `<th colspan="1">${day}, ${fmtDDMMYYYY(dateForDay)}</th>`;
+      matkulSubHeaderCells += `<th rowspan="2" style="font-weight:400; color:var(--ink-soft);">&mdash;<br><span style="font-size:9px;">tidak ada jadwal</span></th>`;
+      return;
+    }
     dayHeaderCells += `<th colspan="${list.length*3}">${day}, ${fmtDDMMYYYY(dateForDay)}</th>`;
     list.forEach(mk=>{
+      jumlahMatkulTampil++;
       matkulSubHeaderCells += `<th colspan="3" style="font-weight:600;">${escapeHtml(mk.nama)}<br><span class="mono" style="font-weight:400;">${mk.jam||1}j</span></th>`;
+      matkulSIACells += `<th style="font-weight:500;">S</th><th style="font-weight:500;">I</th><th style="font-weight:500;">A</th>`;
     });
   });
+
+  // Colgroup: setiap kolom S/I/A (total maupun per mata kuliah) diberi bobot lebar yang SAMA,
+  // supaya semua kolom simetris dan tabel selalu pas dalam 1 layar tanpa perlu digeser ke samping.
+  const W = { no:30, bp:70, nama:120, jam:42, pktos:34, komp:50, ket:58, sia:24, kosong:46 };
+  let colgroupHtml = `<col style="width:${W.no}px;"><col style="width:${W.bp}px;"><col style="width:${W.nama}px;">`;
+  colgroupHtml += `<col style="width:${W.sia}px;"><col style="width:${W.sia}px;"><col style="width:${W.sia}px;">`;
+  colgroupHtml += `<col style="width:${W.jam}px;"><col style="width:${W.pktos}px;"><col style="width:${W.komp}px;">`;
+  DAYS_ID.forEach(day=>{
+    const list = matkulByHari[day];
+    if(!list.length){
+      colgroupHtml += `<col style="width:${W.kosong}px;">`;
+      return;
+    }
+    list.forEach(()=>{
+      colgroupHtml += `<col style="width:${W.sia}px;"><col style="width:${W.sia}px;"><col style="width:${W.sia}px;">`;
+    });
+  });
+  colgroupHtml += `<col style="width:${W.ket}px;">`;
 
   const rows = state.students.map((st,i)=>{
     let dayCells = '';
     DAYS_ID.forEach(day=>{
-      matkulByHari[day].forEach(mk=>{
+      const list = matkulByHari[day];
+      if(!list.length){
+        dayCells += `<td class="mono" style="color:var(--ink-soft);">&mdash;</td>`;
+        return;
+      }
+      list.forEach(mk=>{
         const cumNow = cumulativeSIA(saturday, mk.id, st.id);
         const cumPrev = week>1 ? cumulativeSIA(prevSaturday, mk.id, st.id) : {S:0,I:0,A:0};
         const wS=cumNow.S-cumPrev.S, wI=cumNow.I-cumPrev.I, wA=cumNow.A-cumPrev.A;
-        dayCells += `<td class="mono" style="text-align:center;">${wS||''}</td><td class="mono" style="text-align:center;">${wI||''}</td><td class="mono" style="text-align:center;">${wA||''}</td>`;
+        dayCells += `<td class="mono sia-cell">${wS||''}</td><td class="mono sia-cell">${wI||''}</td><td class="mono sia-cell">${wA||''}</td>`;
       });
     });
     const total = state.matkul.reduce((acc,mk)=>{
@@ -1494,17 +1570,17 @@ function renderWeeklyRecap(){
     const komp = total.I*1 + total.A*2 + pktos;
     const ket = spKeterangan(total.A);
     return `<tr>
-      <td class="mono" style="text-align:center;">${i+1}</td>
-      <td class="nim" style="text-align:center;">${escapeHtml(st.nim)}</td>
+      <td class="mono">${i+1}</td>
+      <td class="nim">${escapeHtml(st.nim)}</td>
       <td>${escapeHtml(st.nama)}</td>
-      <td class="mono" style="text-align:center;">${total.S}</td>
-      <td class="mono" style="text-align:center;">${total.I}</td>
-      <td class="mono" style="text-align:center;">${total.A}</td>
-      <td class="mono" style="text-align:center; font-weight:700;">${jumlahJam}</td>
-      <td class="mono" style="text-align:center;">${pktos}</td>
-      <td class="mono" style="text-align:center; font-weight:700;">${komp}</td>
+      <td class="mono sia-cell">${total.S}</td>
+      <td class="mono sia-cell">${total.I}</td>
+      <td class="mono sia-cell">${total.A}</td>
+      <td class="mono" style="font-weight:700;">${jumlahJam}</td>
+      <td class="mono">${pktos}</td>
+      <td class="mono" style="font-weight:700;">${komp}</td>
       ${dayCells}
-      <td style="white-space:nowrap;">${escapeHtml(ket)}</td>
+      <td class="ket-cell">${escapeHtml(ket)}</td>
     </tr>`;
   }).join('');
 
@@ -1521,23 +1597,27 @@ function renderWeeklyRecap(){
       <select id="summaryWeekSelect">${weekOptions}</select>
     </div>
     ${!adaJadwal ? `<div class="note">Belum ada mata kuliah yang diatur "Hari"-nya di tab "Mata Kuliah" &mdash; kolom per mata kuliah belum bisa ditampilkan.</div>` : ''}
-    <div style="width:100%;">
+    <div class="excel-table-scroll">
       <table class="excel-table excel-table--fit">
+        <colgroup>${colgroupHtml}</colgroup>
         <thead>
           <tr>
-            <th rowspan="2">No</th>
-            <th rowspan="2">BP</th>
-            <th rowspan="2">NAMA</th>
+            <th rowspan="3">No</th>
+            <th rowspan="3">BP</th>
+            <th rowspan="3">NAMA</th>
             <th colspan="3">JUMLAH</th>
-            <th rowspan="2">JUMLAH<br>JAM</th>
-            <th rowspan="2">PKTOS</th>
-            <th rowspan="2">JUMLAH<br>KOMPENSASI</th>
+            <th rowspan="3">JUMLAH<br>JAM</th>
+            <th rowspan="3">PKTOS</th>
+            <th rowspan="3">JUMLAH<br>KOMPENSASI</th>
             ${dayHeaderCells}
-            <th rowspan="2">KETERANGAN</th>
+            <th rowspan="3">KETERANGAN</th>
           </tr>
           <tr>
-            <th>S</th><th>I</th><th>A</th>
+            <th rowspan="2" class="sia-cell">S</th><th rowspan="2" class="sia-cell">I</th><th rowspan="2" class="sia-cell">A</th>
             ${matkulSubHeaderCells}
+          </tr>
+          <tr>
+            ${matkulSIACells}
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -1566,6 +1646,46 @@ function renderModal(){
           <div class="modal-body"><img class="full" src="${sc.dataUrl}" alt="Scan absensi"></div>
         </div>
       </div>`;
+  }
+
+  if(state.modal.type==='adminPin'){
+    root.innerHTML = `
+      <div class="modal-overlay" data-close-modal="1">
+        <div class="modal" style="max-width:360px;" onclick="event.stopPropagation()">
+          <div class="modal-head">
+            <h3>Masuk Mode Admin</h3>
+            <button class="modal-close" data-close-modal="1">&times;</button>
+          </div>
+          <div class="modal-body">
+            <form id="adminPinForm">
+              <div class="field">
+                <label>Masukkan PIN Admin</label>
+                <input type="password" name="pin" autocomplete="off" autofocus placeholder="PIN Admin" style="width:100%; margin-top:6px;">
+              </div>
+              <p id="adminPinError" class="note" style="display:none; color:var(--danger);">PIN salah, coba lagi.</p>
+              <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+                <button type="button" class="btn btn-ghost" data-close-modal="1">Batal</button>
+                <button type="submit" class="btn btn-primary">Masuk</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>`;
+    const pinForm = document.getElementById('adminPinForm');
+    const pinInput = pinForm.querySelector('input[name="pin"]');
+    pinInput.focus();
+    pinForm.addEventListener('submit', (e)=>{
+      e.preventDefault();
+      if(pinInput.value === ADMIN_PIN){
+        state.role = 'admin';
+        state.modal = null;
+        render();
+      } else {
+        document.getElementById('adminPinError').style.display = 'block';
+        pinInput.value = '';
+        pinInput.focus();
+      }
+    });
   }
 
   if(state.modal.type==='rekap'){
@@ -1636,7 +1756,18 @@ function renderModal(){
 
 /* ---------------- Handlers ---------------- */
 function attachHandlers(){
-  document.querySelectorAll('[data-role]').forEach(b=> b.addEventListener('click', ()=>{ state.role=b.dataset.role; render(); }));
+  document.querySelectorAll('[data-role]').forEach(b=> b.addEventListener('click', ()=>{
+    const target = b.dataset.role;
+    if(target==='admin' && state.role!=='admin'){
+      // Mode Admin dikunci PIN lewat modal (bukan window.prompt, karena beberapa
+      // lingkungan preview/iframe memblokir dialog prompt() bawaan browser).
+      state.modal = { type:'adminPin' };
+      renderModal();
+      return;
+    }
+    state.role = target;
+    render();
+  }));
   document.querySelectorAll('[data-prodi]').forEach(b=> b.addEventListener('click', ()=>{
     state.prodi = b.dataset.prodi;
     state.kelas = currentProdi().kelas[0];
@@ -1745,6 +1876,7 @@ function attachHandlers(){
     }
   });
   document.querySelectorAll('[data-del-scan]').forEach(b=> b.addEventListener('click', ()=>{
+    if(state.role!=='admin') return; // hanya Admin yang boleh menghapus scan
     if(!confirm('Hapus scan ini beserta rekapnya?')) return;
     const id = b.dataset.delScan;
     state.scans = state.scans.filter(s=>s.id!==id);
@@ -1757,6 +1889,7 @@ function attachHandlers(){
     renderModal();
   }));
   document.querySelectorAll('[data-open-rekap]').forEach(b=> b.addEventListener('click', ()=>{
+    if(state.role!=='admin') return; // hanya Admin yang boleh mengisi/mengubah rekap
     state.modal = { type:'rekap', id:b.dataset.openRekap };
     renderModal();
   }));

@@ -1773,6 +1773,9 @@ function renderSummaryMatrix(){
     <div class="panel-head">
       <div><h2>Rekap Total Gabungan Semua Mata Kuliah &mdash; Kelas ${state.kelas}</h2><p>Jumlah jam S/I/A dari seluruh mata kuliah dijumlahkan per mahasiswa. JUMLAH KOMPENSASI dihitung dari total gabungan ini.</p></div>
     </div>
+    <div style="margin-bottom:14px;">
+      <button class="btn btn-ghost btn-sm" id="exportTotalExcelBtn">&#8595; Download Excel (Rekap Total)</button>
+    </div>
     <div style="overflow-x:auto;">
       <table class="excel-table-total">
         <thead>
@@ -1924,6 +1927,9 @@ function renderWeeklyRecap(){
       <select id="summaryWeekSelect">${weekOptions}</select>
     </div>
     ${!adaJadwal ? `<div class="note">Belum ada mata kuliah yang diatur "Hari"-nya di tab "Mata Kuliah" &mdash; kolom per mata kuliah belum bisa ditampilkan.</div>` : ''}
+    <div style="margin-bottom:14px;">
+      <button class="btn btn-ghost btn-sm" id="exportWeekExcelBtn" ${!state.students.length ? 'disabled' : ''}>&#8595; Download Excel (Minggu ${week} ini)</button>
+    </div>
     <div class="excel-table-scroll">
       <table class="excel-table excel-table--fit">
         <colgroup>${colgroupHtml}</colgroup>
@@ -2236,6 +2242,10 @@ function attachHandlers(){
   });
   const exportExcelBtn = document.getElementById('exportExcelBtn');
   if(exportExcelBtn) exportExcelBtn.addEventListener('click', exportOfficialExcel);
+  const exportWeekExcelBtn = document.getElementById('exportWeekExcelBtn');
+  if(exportWeekExcelBtn) exportWeekExcelBtn.addEventListener('click', exportWeeklyExcelOne_);
+  const exportTotalExcelBtn = document.getElementById('exportTotalExcelBtn');
+  if(exportTotalExcelBtn) exportTotalExcelBtn.addEventListener('click', exportTotalRecapExcel);
 }
 
 /* ---------------- Export Excel (format resmi mingguan) ---------------- */
@@ -2286,6 +2296,42 @@ function exportOfficialExcel(){
   if(!state.semesterStart){ alert('Atur Tanggal Mulai Semester dulu di tab Mata Kuliah.'); return; }
   if(!state.students.length){ alert('Belum ada data mahasiswa.'); return; }
 
+  const { data, merges } = buildRekapMingguanBlocks_(Array.from({length:TOTAL_WEEKS}, (_,i)=>i+1));
+
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  ws['!merges'] = merges;
+  ws['!cols'] = [{wch:2},{wch:5},{wch:14},{wch:26},{wch:8},{wch:8},{wch:8},{wch:10},{wch:10},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  const sheetName = (state.kelas||'Kelas').slice(0,31);
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const fname = `Rekap_Absensi_${state.prodi}_${state.kelas}.xlsx`;
+  XLSX.writeFile(wb, fname);
+}
+
+// Download Excel untuk SATU minggu saja -- persis dengan tabel "Rekap Absensi per Minggu"
+// yang sedang tampil di layar (minggu yang lagi dipilih di dropdown).
+function exportWeeklyExcelOne_(){
+  if(typeof XLSX==='undefined'){ alert('Modul Excel belum siap, coba lagi sesaat.'); return; }
+  if(!state.semesterStart){ alert('Atur Tanggal Mulai Semester dulu di tab Mata Kuliah.'); return; }
+  if(!state.students.length){ alert('Belum ada data mahasiswa.'); return; }
+  const week = state.summaryWeek || 1;
+
+  const { data, merges } = buildRekapMingguanBlocks_([week]);
+
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  ws['!merges'] = merges;
+  ws['!cols'] = [{wch:2},{wch:5},{wch:14},{wch:26},{wch:8},{wch:8},{wch:8},{wch:10},{wch:10},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  const sheetName = (state.kelas||'Kelas').slice(0,31);
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const fname = `Rekap_Minggu${week}_${state.prodi}_${state.kelas}.xlsx`;
+  XLSX.writeFile(wb, fname);
+}
+
+// Membangun baris-baris (aoa) + merge cell untuk 1 atau beberapa blok minggu, format resmi
+// rekapitulasi absensi jurusan. Dipakai bersama oleh exportOfficialExcel (semua minggu) dan
+// exportWeeklyExcelOne_ (1 minggu saja, sesuai yang sedang dipilih di layar).
+function buildRekapMingguanBlocks_(weekNumbers){
   const matkulByHari = {};
   DAYS_ID.forEach(d=> matkulByHari[d] = state.matkul.filter(m=>m.hari===d));
 
@@ -2296,7 +2342,7 @@ function exportOfficialExcel(){
   function mergeRange(r1,c1,r2,c2){ if(r1===r2 && c1===c2) return; merges.push({s:{r:r1,c:c1},e:{r:r2,c:c2}}); }
 
   let row = 0;
-  for(let week=1; week<=TOTAL_WEEKS; week++){
+  weekNumbers.forEach(week=>{
     const monday = weekMondayOf(week, state.semesterStart);
     const saturday = addDaysDate(monday, 5); // Sabtu = akhir minggu kuliah (Senin-Sabtu)
     const prevSaturday = addDaysDate(monday, -2); // Sabtu minggu sebelumnya
@@ -2367,15 +2413,50 @@ function exportOfficialExcel(){
     });
 
     row = r+2; // spasi sebelum blok minggu berikutnya
-  }
+  });
+
+  return { data, merges };
+}
+
+// Download Excel untuk tabel "Rekap Total Gabungan Semua Mata Kuliah" -- persis dengan
+// yang tampil di layar: No, BP, Nama, Total Jam S/I/A, Jumlah Jam, PKTOS, Jumlah Kompensasi.
+function exportTotalRecapExcel(){
+  if(typeof XLSX==='undefined'){ alert('Modul Excel belum siap, coba lagi sesaat.'); return; }
+  if(!state.students.length || !state.matkul.length){ alert('Lengkapi data mahasiswa dan mata kuliah terlebih dahulu.'); return; }
+
+  const rekapSemua = state.matkul.map(m=>hitungRekapMatkul(m.id));
+  const data = [
+    ['REKAP TOTAL GABUNGAN SEMUA MATA KULIAH'],
+    ['JURUSAN TEKNIK MESIN'],
+    ['PROGRAM STUDI ' + (currentProdi()?currentProdi().nama.toUpperCase():'')],
+    ['KELAS : ' + state.kelas],
+    [],
+    ['No','BP','NAMA','S (Jam)','I (Jam)','A (Jam)','JUMLAH JAM','PKTOS','JUMLAH KOMPENSASI'],
+  ];
+  state.students.forEach((st,i)=>{
+    let S=0,I=0,A=0;
+    rekapSemua.forEach(r=>{
+      const d = r.perStudent[st.id];
+      S += d.Sjam; I += d.Ijam; A += d.Ajam;
+    });
+    const jumlah = S+I+A;
+    const pktos = 0;
+    const komp = I*1 + A*2 + pktos;
+    data.push([i+1, st.nim, st.nama, S, I, A, jumlah, pktos, komp]);
+  });
 
   const ws = XLSX.utils.aoa_to_sheet(data);
-  ws['!merges'] = merges;
-  ws['!cols'] = [{wch:2},{wch:5},{wch:14},{wch:26},{wch:8},{wch:8},{wch:8},{wch:10},{wch:10},{wch:12}];
+  ws['!merges'] = [
+    {s:{r:0,c:0}, e:{r:0,c:8}},
+    {s:{r:1,c:0}, e:{r:1,c:8}},
+    {s:{r:2,c:0}, e:{r:2,c:8}},
+    {s:{r:3,c:0}, e:{r:3,c:8}},
+  ];
+  ws['!cols'] = [{wch:4},{wch:14},{wch:28},{wch:10},{wch:10},{wch:10},{wch:12},{wch:8},{wch:16}];
   const wb = XLSX.utils.book_new();
-  const sheetName = (state.kelas||'Kelas').slice(0,31);
+  const sheetName = 'Rekap Total';
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  const fname = `Rekap_Absensi_${state.prodi}_${state.kelas}.xlsx`;
+  const fname = `Rekap_Total_${state.prodi}_${state.kelas}.xlsx`;
   XLSX.writeFile(wb, fname);
 }
 

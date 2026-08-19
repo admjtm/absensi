@@ -202,6 +202,24 @@
   }
   .excel-table--fit tbody tr:nth-child(even) td{ background:#FAFBFC; }
   .excel-table--fit td.ket-cell{ text-align:left; white-space:normal; }
+  /* Tabel "Rekap Total Gabungan Semua Mata Kuliah" -- dibedakan dari tabel Rekap per Minggu
+     dengan header solid warna korporat + aksen warna lembut pada kolom S/I/A, tanpa
+     berlebihan supaya tetap terlihat profesional/rapi. */
+  .excel-table-total{ border-collapse:collapse; width:100%; font-size:13px; }
+  .excel-table-total th, .excel-table-total td{ border:1px solid #444B54; }
+  .excel-table-total thead th{
+    background:var(--primary); color:#fff; font-weight:700; text-align:center;
+    padding:8px; vertical-align:middle;
+  }
+  .excel-table-total tbody td{ padding:6px 10px; }
+  .excel-table-total tbody tr:nth-child(even) td{ background:#F4F6F8; }
+  .excel-table-total tbody tr:nth-child(odd) td{ background:#FFFFFF; }
+  .excel-table-total tbody tr:hover td{ background:#EAF0F6; }
+  .excel-table-total td.col-s{ background:#EAF5F1 !important; color:#1B6B4C; font-weight:600; }
+  .excel-table-total td.col-i{ background:#FCF3E3 !important; color:#8A5A00; font-weight:600; }
+  .excel-table-total td.col-a{ background:#FBEAE8 !important; color:#A32C1E; font-weight:600; }
+  .excel-table-total td.col-jumlah{ background:#F1F3F6 !important; color:var(--ink); font-weight:700; }
+  .excel-table-total td.col-komp{ background:#EDEBF5 !important; color:#4A2E8A; font-weight:700; }
   .empty-state{
     text-align:center; padding:36px 20px; color:var(--ink-soft);
   }
@@ -1741,12 +1759,12 @@ function renderSummaryMatrix(){
       <td class="mono" style="text-align:center;">${i+1}</td>
       <td class="nim" style="text-align:center;">${escapeHtml(st.nim)}</td>
       <td>${escapeHtml(st.nama)}</td>
-      <td class="mono" style="text-align:center;">${S}</td>
-      <td class="mono" style="text-align:center;">${I}</td>
-      <td class="mono" style="text-align:center;">${A}</td>
-      <td class="mono" style="text-align:center; font-weight:700;">${jumlah}</td>
+      <td class="mono col-s" style="text-align:center;">${S}</td>
+      <td class="mono col-i" style="text-align:center;">${I}</td>
+      <td class="mono col-a" style="text-align:center;">${A}</td>
+      <td class="mono col-jumlah" style="text-align:center;">${jumlah}</td>
       <td class="mono" style="text-align:center;">${pktos}</td>
-      <td class="mono" style="text-align:center; font-weight:700;">${komp}</td>
+      <td class="mono col-komp" style="text-align:center;">${komp}</td>
     </tr>`;
   }).join('');
 
@@ -1756,7 +1774,7 @@ function renderSummaryMatrix(){
       <div><h2>Rekap Total Gabungan Semua Mata Kuliah &mdash; Kelas ${state.kelas}</h2><p>Jumlah jam S/I/A dari seluruh mata kuliah dijumlahkan per mahasiswa. JUMLAH KOMPENSASI dihitung dari total gabungan ini.</p></div>
     </div>
     <div style="overflow-x:auto;">
-      <table class="excel-table">
+      <table class="excel-table-total">
         <thead>
           <tr>
             <th rowspan="2">No</th>

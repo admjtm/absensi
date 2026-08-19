@@ -1261,13 +1261,7 @@ async function loadClass(){
     state.loading = true;
   }
   render();
-  const [rosterRes, matkul, scans, rekap, semStart] = await Promise.all([
-    safeGetRaw('roster:'+base),
-    safeGet('matkul:'+base, []),
-    safeGet('scans:'+base, []),
-    safeGet('rekap:'+base, {}),
-    safeGet('semesterStart:'+base, null),
-  ]);
+  const [rosterRes, matkul, scans, rekap, semStart] = await batchGetClassData_(base);
   if(base !== keyBase()){
     // Pengguna sudah pindah ke kelas lain sebelum data ini selesai diambil -- buang hasil
     // ini supaya tidak menimpa data kelas yang sedang ditampilkan sekarang.
@@ -1323,6 +1317,41 @@ async function loadClass(){
   state.loading = false;
   saveCachedClass(base);
   render();
+}
+// Mengambil roster+matkul+scans+rekap+semesterStart untuk 1 kelas dalam SATU kali
+// request ke Apps Script (?keys=k1,k2,k3,...), jauh lebih cepat daripada 5 request
+// terpisah -- terutama untuk kelas yang baru pertama kali dibuka (belum ada di cache
+// browser). Kalau backend lama (belum mendukung ?keys=) masih terpasang, otomatis
+// jatuh ke cara lama (5 request terpisah) supaya aplikasi tetap jalan normal.
+async function batchGetClassData_(base){
+  const keys = ['roster:'+base, 'matkul:'+base, 'scans:'+base, 'rekap:'+base, 'semesterStart:'+base];
+  try{
+    const res = await fetch(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')));
+    const r = await res.json();
+    if(r && r.values){
+      const parse = (k, fallback)=>{
+        const entry = r.values[k];
+        if(entry && entry.found && entry.value) return { found:true, value: JSON.parse(entry.value) };
+        return { found:false, value: fallback };
+      };
+      const rosterRes = parse(keys[0], []);
+      return [
+        rosterRes,
+        parse(keys[1], []).value,
+        parse(keys[2], []).value,
+        parse(keys[3], {}).value,
+        parse(keys[4], null).value,
+      ];
+    }
+  }catch(e){ console.error('Batch load gagal, jatuh ke cara lama:', e); }
+  // Fallback: backend belum mendukung ?keys= (Code.gs belum di-update) atau request batch gagal.
+  return Promise.all([
+    safeGetRaw(keys[0]),
+    safeGet(keys[1], []),
+    safeGet(keys[2], []),
+    safeGet(keys[3], {}),
+    safeGet(keys[4], null),
+  ]);
 }
 async function safeGet(key, fallback){
   const r = await safeGetRaw(key);

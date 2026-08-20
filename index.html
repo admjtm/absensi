@@ -341,11 +341,13 @@ const SHEETS_API_URL = 'https://script.google.com/macros/s/AKfycbyVRfjC6WpsieEjM
 
 const PRODI = [
   { key:'d3tm',   kode:'D3-TM',   nama:'D3 Teknik Mesin',                  kelas: kelasD3() },
-  { key:'d3tab',  kode:'D3-TAB',  nama:'D3 Teknik Alat Berat',             kelas: kelasD3() },
+  { key:'d3tab',  kode:'D3-TAB',  nama:'D3 Teknik Alat Berat',             kelas: kelasD3TAB() },
   { key:'d4tmpr', kode:'D4-TMPR', nama:'D4 Teknik Manufaktur',             kelas: kelasD4() },
   { key:'d4rpm',  kode:'D4-RPM',  nama:'D4 Rekayasa Perancangan Mekanik',  kelas: kelasD4() },
 ];
 function kelasD3(){ const t=[]; for(let tk=1;tk<=3;tk++) for(const h of ['A','B','C','D','E','F']) t.push(tk+h); return t; }
+// D3 Teknik Alat Berat kelasnya cuma A-C per tingkat (1,2,3) -- beda dari D3 Teknik Mesin yang A-F.
+function kelasD3TAB(){ const t=[]; for(let tk=1;tk<=3;tk++) for(const h of ['A','B','C']) t.push(tk+h); return t; }
 function kelasD4(){ const t=[]; for(let tk=1;tk<=2;tk++) for(const h of ['A','B','C','D','E','F']) t.push(tk+h); t.push('3A','3B','4A','4B'); return t; }
 
 const STATUS = [
@@ -356,6 +358,348 @@ const STATUS = [
 ];
 
 const SEED_STUDENTS = {
+  "d3tab:2A": [
+    {
+      "nama": "Gilang Buana Marsya",
+      "nim": "2501104001"
+    },
+    {
+      "nama": "Bintang Fazil Aulia",
+      "nim": "2501104002"
+    },
+    {
+      "nama": "Khairul El Fadli",
+      "nim": "2501104003"
+    },
+    {
+      "nama": "Muhammad Daffa Alfarezi",
+      "nim": "2501104004"
+    },
+    {
+      "nama": "Wiragil Triarga",
+      "nim": "2501104005"
+    },
+    {
+      "nama": "Attila Aqril Yoana Al-Fathi",
+      "nim": "2501104006"
+    },
+    {
+      "nama": "Farhan Fadhlu Rahman",
+      "nim": "2501104007"
+    },
+    {
+      "nama": "Hassan Ahmad",
+      "nim": "2501104008"
+    },
+    {
+      "nama": "Afif Kamil Ramadhana",
+      "nim": "2501104009"
+    },
+    {
+      "nama": "Muhammad Haekal Satria",
+      "nim": "2501104010"
+    },
+    {
+      "nama": "Tio Abdul Rahman",
+      "nim": "2501104011"
+    },
+    {
+      "nama": "Muhammad Thoriqul Haqqi",
+      "nim": "2501104012"
+    },
+    {
+      "nama": "Muhammad Hashiif Alfajri",
+      "nim": "2501104013"
+    },
+    {
+      "nama": "Muhammad Zaki As Shafa'",
+      "nim": "2501104014"
+    },
+    {
+      "nama": "Rafki Aulianda",
+      "nim": "2501104015"
+    },
+    {
+      "nama": "Aththariq Fedorava Jauza",
+      "nim": "2501104016"
+    },
+    {
+      "nama": "Muhammad Zacky Rheza Paleva",
+      "nim": "2501104017"
+    },
+    {
+      "nama": "Farhan Agil",
+      "nim": "2501104018"
+    },
+    {
+      "nama": "Ferdy Yumna Ramadhan",
+      "nim": "2501104019"
+    },
+    {
+      "nama": "Akhmad Mayzhazkia Adi Wijaya",
+      "nim": "2501104020"
+    },
+    {
+      "nama": "Lazuardi Andromeda Putra Medias",
+      "nim": "2501104021"
+    },
+    {
+      "nama": "Salfiya Salma Karimah",
+      "nim": "2501104022"
+    },
+    {
+      "nama": "M. Riski Al Hidayah",
+      "nim": "2501104023"
+    },
+    {
+      "nama": "Yazid Milad Jadulhaq",
+      "nim": "2501104024"
+    }
+  ],
+  "d3tab:2B": [
+    {
+      "nama": "Rabbiatul Ikraam",
+      "nim": "2501101001"
+    },
+    {
+      "nama": "Fahri Busral Agung",
+      "nim": "2501101003"
+    },
+    {
+      "nama": "Yusuf Al-Rahman",
+      "nim": "2501101005"
+    },
+    {
+      "nama": "Adinda Fesamulia",
+      "nim": "2501101007"
+    },
+    {
+      "nama": "Muhammad Alfarabi Ismail",
+      "nim": "2501101009"
+    },
+    {
+      "nama": "Mindetria Sahid Putra",
+      "nim": "2501101011"
+    },
+    {
+      "nama": "Haris Almughni",
+      "nim": "2501101013"
+    },
+    {
+      "nama": "Farel",
+      "nim": "2501101015"
+    },
+    {
+      "nama": "Muhammad Azis",
+      "nim": "2501101017"
+    },
+    {
+      "nama": "Ihsan Ermando",
+      "nim": "2501101019"
+    },
+    {
+      "nama": "Aditya Pramana",
+      "nim": "2501101021"
+    },
+    {
+      "nama": "Rifki Al Afif",
+      "nim": "2501101023"
+    },
+    {
+      "nama": "Azmiyul Asyraf",
+      "nim": "2501102002"
+    },
+    {
+      "nama": "Abib Aldrid Orif Kiansyah",
+      "nim": "2501102004"
+    },
+    {
+      "nama": "Muhammad Rizki Rahmadani",
+      "nim": "2501102006"
+    },
+    {
+      "nama": "Atthoriq Maulana",
+      "nim": "2501102008"
+    },
+    {
+      "nama": "Multazam Hidayatullah",
+      "nim": "2501102010"
+    },
+    {
+      "nama": "Naufal Zagwan Putra",
+      "nim": "2501102012"
+    },
+    {
+      "nama": "Daffa Alif Insani",
+      "nim": "2501102014"
+    },
+    {
+      "nama": "Muhammad Farhan",
+      "nim": "2501102016"
+    },
+    {
+      "nama": "Zahran Bintang",
+      "nim": "2501102018"
+    },
+    {
+      "nama": "Armarian Dava",
+      "nim": "2501102020"
+    },
+    {
+      "nama": "Zaidan Musyaffa Ilham",
+      "nim": "2501102022"
+    },
+    {
+      "nama": "Nabil Hamdhi Fathiandri",
+      "nim": "2501102024"
+    },
+    {
+      "nama": "Habiib Dwi Putra",
+      "nim": "2501102026"
+    },
+    {
+      "nama": "Hady Alfath Pratama",
+      "nim": "2501102028"
+    },
+    {
+      "nama": "M. Syah Reza",
+      "nim": "2501102030"
+    },
+    {
+      "nama": "Muhammad Abdul Rauf",
+      "nim": "2501103001"
+    },
+    {
+      "nama": "Tiflan",
+      "nim": "2501103003"
+    },
+    {
+      "nama": "Rivchy Agha",
+      "nim": "2501103005"
+    }
+  ],
+  "d3tab:2C": [
+    {
+      "nama": "Nanda",
+      "nim": "2501101002"
+    },
+    {
+      "nama": "M. Reza Ramadhan",
+      "nim": "2501101004"
+    },
+    {
+      "nama": "Kenzo Apriliano",
+      "nim": "2501101006"
+    },
+    {
+      "nama": "Dimas Eka Saputra Pohan",
+      "nim": "2501101008"
+    },
+    {
+      "nama": "Septio Ariski",
+      "nim": "2501101010"
+    },
+    {
+      "nama": "Divan Saputra",
+      "nim": "2501101012"
+    },
+    {
+      "nama": "Fajri Ramadhan",
+      "nim": "2501101014"
+    },
+    {
+      "nama": "Alzari Risman",
+      "nim": "2501101016"
+    },
+    {
+      "nama": "Iqbal Aldiya Ulhaq",
+      "nim": "2501101018"
+    },
+    {
+      "nama": "Dyo Rabiul Rahman",
+      "nim": "2501101020"
+    },
+    {
+      "nama": "Rizky Pratama",
+      "nim": "2501101022"
+    },
+    {
+      "nama": "Zaki Alkautsar",
+      "nim": "2501102001"
+    },
+    {
+      "nama": "Andi Mitrajaya",
+      "nim": "2501102003"
+    },
+    {
+      "nama": "Alfi Syahrin Alnedi",
+      "nim": "2501102005"
+    },
+    {
+      "nama": "Farid Muhammad Afif",
+      "nim": "2501102007"
+    },
+    {
+      "nama": "Alfarezi Akbar",
+      "nim": "2501102009"
+    },
+    {
+      "nama": "Fabima Rahmat",
+      "nim": "2501102011"
+    },
+    {
+      "nama": "Rifqi Luthfir Rahman",
+      "nim": "2501102013"
+    },
+    {
+      "nama": "Rendy Simko",
+      "nim": "2501102015"
+    },
+    {
+      "nama": "Dio Manjuni",
+      "nim": "2501102017"
+    },
+    {
+      "nama": "Fikri Wijaksana Septian",
+      "nim": "2501102019"
+    },
+    {
+      "nama": "Muhammad Fhadil",
+      "nim": "2501102021"
+    },
+    {
+      "nama": "Raihanatu Ummayum",
+      "nim": "2501102023"
+    },
+    {
+      "nama": "Muhammad Zhikri Siddik",
+      "nim": "2501102025"
+    },
+    {
+      "nama": "Imam Falisya Arwi",
+      "nim": "2501102027"
+    },
+    {
+      "nama": "Muhammad Viki Five Dika",
+      "nim": "2501102029"
+    },
+    {
+      "nama": "Dico Syafrianda Pratama",
+      "nim": "2501102031"
+    },
+    {
+      "nama": "Yazid Naufal Abqari",
+      "nim": "2501103002"
+    },
+    {
+      "nama": "Muhammad Azzam El Khairi",
+      "nim": "2501103004"
+    },
+    {
+      "nama": "Abrar Suraski",
+      "nim": "2501103006"
+    }
+  ],
   "d3tm:2A": [
     {
       "nama": "Rahmat Al Hamid",

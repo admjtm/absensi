@@ -1220,6 +1220,21 @@ const SEED_MATKUL = {
 // pindah sendiri ke mode Admin. Ganti angka ini sesuai kebutuhan.
 const ADMIN_PIN = '2025';
 
+// PIN untuk menu "Upload Absensi" di sisi Ketua Kelas -- satu PIN sama dipakai untuk SEMUA
+// kelas (bukan beda-beda per kelas). PIN yang benar hanya berlaku untuk HARI itu saja: kalau
+// tanggal sudah berganti (mis. dibuka lagi besok), Ketua Kelas harus memasukkan PIN ulang.
+// Ganti angka ini sesuai kebutuhan.
+const KETUA_UPLOAD_PIN = '1234';
+const KETUA_UPLOAD_UNLOCK_KEY = 'absensi_ketua_upload_unlock_v1';
+function isKetuaUploadUnlockedToday(){
+  try{ return localStorage.getItem(KETUA_UPLOAD_UNLOCK_KEY) === todayStr(); }
+  catch(e){ return false; } // localStorage diblokir/penuh -- anggap belum unlock, aman secara default
+}
+function setKetuaUploadUnlockedToday(){
+  try{ localStorage.setItem(KETUA_UPLOAD_UNLOCK_KEY, todayStr()); }
+  catch(e){ /* abaikan -- tidak fatal, cuma PIN akan diminta lagi tiap buka */ }
+}
+
 let state = {
   role: 'ketua', // 'admin' | 'ketua' -- tampilan awal saat website dibuka adalah Ketua Kelas;
                  // untuk masuk Mode Admin harus klik tombol "Admin" lalu masukkan PIN.
@@ -1491,7 +1506,14 @@ function renderTabContent(){
   }
   if(state.tab==='mahasiswa') return renderMahasiswa();
   if(state.tab==='matkul') return renderMatkul();
-  if(state.tab==='upload') return renderUpload();
+  if(state.tab==='upload'){
+    // Menu Upload Absensi di sisi Ketua Kelas dikunci PIN harian -- Admin selalu bisa
+    // langsung masuk tanpa PIN (sudah lewat gerbang PIN Admin sendiri).
+    if(state.role==='ketua' && !isKetuaUploadUnlockedToday()){
+      return renderUploadLocked();
+    }
+    return renderUpload();
+  }
   if(state.tab==='rekap') return renderRekap();
   return '';
 }
@@ -1611,6 +1633,26 @@ function renderMatkul(){
 }
 
 /* ---- Upload Absensi ---- */
+// Layar kunci PIN yang tampil di tab "Upload Absensi" sisi Ketua Kelas selama belum
+// memasukkan PIN yang benar untuk hari ini. Tombolnya membuka modal input PIN.
+function renderUploadLocked(){
+  return `
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Upload Absensi &mdash; Kelas ${state.kelas}</h2>
+        <p>Menu ini dikunci PIN, khusus untuk Ketua Kelas</p>
+      </div>
+    </div>
+    <div class="empty-state">
+      <div class="glyph">&#128274;</div>
+      <h3>Masukkan PIN untuk membuka Upload Absensi</h3>
+      <p>PIN berlaku untuk hari ini saja. Tanyakan PIN ke Admin/Dosen jika belum tahu.</p>
+      <button class="btn btn-accent" data-open-ketua-upload-pin="1" style="margin-top:10px;">Masukkan PIN</button>
+    </div>
+  </div>`;
+}
+
 function renderUpload(){
   // Form upload sekarang boleh dipakai Admin maupun Ketua Kelas -- keduanya bisa unggah scan.
   const uploadForm = `
@@ -2022,6 +2064,46 @@ function renderModal(){
     });
   }
 
+  if(state.modal.type==='ketuaUploadPin'){
+    root.innerHTML = `
+      <div class="modal-overlay" data-close-modal="1">
+        <div class="modal" style="max-width:360px;" onclick="event.stopPropagation()">
+          <div class="modal-head">
+            <h3>PIN Upload Absensi</h3>
+            <button class="modal-close" data-close-modal="1">&times;</button>
+          </div>
+          <div class="modal-body">
+            <form id="ketuaUploadPinForm">
+              <div class="field">
+                <label>Masukkan PIN</label>
+                <input type="password" name="pin" autocomplete="off" autofocus placeholder="PIN Upload Absensi" style="width:100%; margin-top:6px;">
+              </div>
+              <p id="ketuaUploadPinError" class="note" style="display:none; color:var(--danger);">PIN salah, coba lagi.</p>
+              <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+                <button type="button" class="btn btn-ghost" data-close-modal="1">Batal</button>
+                <button type="submit" class="btn btn-primary">Buka</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>`;
+    const pinForm = document.getElementById('ketuaUploadPinForm');
+    const pinInput = pinForm.querySelector('input[name="pin"]');
+    pinInput.focus();
+    pinForm.addEventListener('submit', (e)=>{
+      e.preventDefault();
+      if(pinInput.value === KETUA_UPLOAD_PIN){
+        setKetuaUploadUnlockedToday(); // berlaku sampai tanggal berganti, lalu diminta lagi
+        state.modal = null;
+        render();
+      } else {
+        document.getElementById('ketuaUploadPinError').style.display = 'block';
+        pinInput.value = '';
+        pinInput.focus();
+      }
+    });
+  }
+
   if(state.modal.type==='rekap'){
     const sc = state.scans.find(s=>s.id===state.modal.id);
     if(!sc){ state.modal=null; return; }
@@ -2107,6 +2189,10 @@ function attachHandlers(){
     }
     state.role = target;
     render();
+  }));
+  document.querySelectorAll('[data-open-ketua-upload-pin]').forEach(b=> b.addEventListener('click', ()=>{
+    state.modal = { type:'ketuaUploadPin' };
+    renderModal();
   }));
   document.querySelectorAll('[data-prodi]').forEach(b=> b.addEventListener('click', ()=>{
     state.prodi = b.dataset.prodi;

@@ -412,6 +412,12 @@
 const SHEETS_API_URL = 'https://script.google.com/macros/s/AKfycbyVRfjC6WpsieEjMYOfhOZRNmYazPlvyJTbvHwPOqsh39wxc98W7vuttvqGLVFN-0pdQA/exec';
 /* ============================================================================ */
 
+/* MODE DEBUG SEMENTARA: buka situs dengan tambahan ?debugNotif=1 di belakang URL
+   (contoh: admjtm.github.io/absensi/?debugNotif=1) untuk memunculkan kotak pop-up
+   yang menunjukkan persis berhasil/gagalnya pencatatan notifikasi setiap upload.
+   Hapus blok ini nanti setelah masalah notifikasi selesai diperbaiki. */
+window.__DEBUG_NOTIF__ = new URLSearchParams(window.location.search).get('debugNotif') === '1';
+
 const PRODI = [
   { key:'d3tm',   kode:'D3-TME',   nama:'D3 Teknik Mesin',                  kelas: kelasD3() },
   { key:'d3tab',  kode:'D3-TAB',  nama:'D3 Teknik Alat Berat',             kelas: kelasD3TAB() },
@@ -2114,10 +2120,13 @@ async function saveSemesterStart(){ await safeSet('semesterStart:'+keyBase(), st
 // Upload gambar (data URL base64 hasil compressImage) ke Google Drive lewat Apps Script,
 // mengembalikan URL gambar tersimpan di Drive. Foto TIDAK lagi disimpan sebagai teks base64
 // di Google Sheets, supaya tidak kena batas 50.000 karakter per sel.
-async function uploadImageToDrive(dataUrl, filename){
+// 'logInfo' (opsional): kalau diisi {prodi,kelas,tanggalKuliah,matkul}, backend akan SEKALIGUS
+// mencatat baris ke "Log Scan Absensi" dalam request yang SAMA -- supaya notifikasi Admin tidak
+// bergantung pada request kedua yang terpisah (yang sebelumnya kadang gagal tanpa alasan jelas).
+async function uploadImageToDrive(dataUrl, filename, logInfo){
   const res = await fetch(SHEETS_API_URL, {
     method: 'POST',
-    body: JSON.stringify({ action:'uploadImage', dataUrl, filename }),
+    body: JSON.stringify({ action:'uploadImage', dataUrl, filename, log: logInfo || null }),
   });
   const r = await res.json();
   if(!r || !r.ok || !r.url) throw new Error(r && r.error ? r.error : 'Upload gagal');
@@ -2129,12 +2138,19 @@ async function uploadImageToDrive(dataUrl, filename){
 // state internal aplikasi -- kalau logScan gagal, tidak menghentikan proses upload utama.
 async function logScanToSheet(payload){
   try{
-    await fetch(SHEETS_API_URL, {
+    const res = await fetch(SHEETS_API_URL, {
       method: 'POST',
       body: JSON.stringify({ action:'logScan', ...payload }),
     });
+    const r = await res.json();
+    if(window.__DEBUG_NOTIF__) alert('DEBUG logScan sukses: ' + JSON.stringify(r));
+    if(!r || !r.ok){
+      console.error('logScan ditolak backend:', r);
+      if(window.__DEBUG_NOTIF__) alert('DEBUG logScan GAGAL (backend menolak): ' + JSON.stringify(r));
+    }
   }catch(e){
     console.error('Gagal mencatat log scan:', e);
+    if(window.__DEBUG_NOTIF__) alert('DEBUG logScan GAGAL (network/exception): ' + String(e));
   }
 }
 async function safeSet(key, value){
@@ -2223,6 +2239,12 @@ function prodiKodeFromNama_(nama){
   const p = PRODI.find(x=>x.nama===nama);
   return p ? p.kode.replace('-', ' ') : nama;
 }
+// Format teks notifikasi upload jadi satu kalimat rapi, mis. "D3 TME Kelas 1 A mengupload berkas".
+// 'kelas' tersimpan sebagai gabungan tanpa spasi (mis. "1A", "2D") -> dipisah jadi "1 A", "2 D".
+function notifUploadText_(prodiNama, kelas){
+  const kelasSpasi = String(kelas||'').replace(/^(\d+)([A-Za-z]+)$/, '$1 $2');
+  return `${prodiKodeFromNama_(prodiNama)} Kelas ${kelasSpasi} mengupload berkas`;
+}
 function showAdminUploadToast(row){
   const container = document.getElementById('adminToastContainer');
   if(!container) return;
@@ -2231,7 +2253,7 @@ function showAdminUploadToast(row){
   el.innerHTML = `
     <div class="icon">&#8593;</div>
     <div class="body">
-      <div class="title">${escapeHtml(prodiKodeFromNama_(row.prodi))} - ${escapeHtml(row.kelas)} mengupload berkas</div>
+      <div class="title">${escapeHtml(notifUploadText_(row.prodi, row.kelas))}</div>
       <div class="sub">${escapeHtml(row.matkul||'')} &middot; ${escapeHtml(formatDate(row.tanggalKuliah))}</div>
     </div>
     <button class="close" aria-label="Tutup">&times;</button>`;
@@ -2286,7 +2308,7 @@ function renderNotifBell(){
           <div class="notif-item ${n.read?'':'unread'}">
             <div class="icon">&#8593;</div>
             <div class="body">
-              <div class="title">${escapeHtml(prodiKodeFromNama_(n.prodi))} - ${escapeHtml(n.kelas)} mengupload berkas</div>
+              <div class="title">${escapeHtml(notifUploadText_(n.prodi, n.kelas))}</div>
               <div class="sub">${escapeHtml(n.matkul||'')} &middot; ${escapeHtml(formatDate(n.tanggalKuliah))}</div>
               <div class="time">${timeAgo(n.timestamp)}</div>
             </div>
@@ -3170,17 +3192,17 @@ function attachHandlers(){
     try{
       const compressed = await compressImage(file);
       submitBtn.textContent = 'Menyimpan foto...';
-      const driveUrl = await uploadImageToDrive(compressed, 'scan-' + tanggal + '-' + uid() + '.jpg');
-      state.scans.push({ id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, dataUrl:driveUrl, uploadedAt:new Date().toISOString(), direkap:false });
-      render();
-      saveScans();
-      logScanToSheet({
+      // Info notifikasi dikirim BERSAMAAN dengan foto dalam 1 request (lihat komentar di
+      // uploadImageToDrive) supaya pencatatan notifikasi tidak pernah lolos gagal sendirian.
+      const driveUrl = await uploadImageToDrive(compressed, 'scan-' + tanggal + '-' + uid() + '.jpg', {
         prodi: currentProdi() ? currentProdi().nama : state.prodi,
         kelas: state.kelas,
         tanggalKuliah: tanggal,
         matkul: mk ? mk.nama : '(tidak diketahui)',
-        url: driveUrl,
       });
+      state.scans.push({ id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, dataUrl:driveUrl, uploadedAt:new Date().toISOString(), direkap:false });
+      render();
+      saveScans();
     }catch(err){
       alert('Gagal mengunggah gambar. Coba lagi.');
       submitBtn.disabled=false; submitBtn.textContent='↑ Upload Scan';

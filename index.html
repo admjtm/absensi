@@ -328,7 +328,7 @@
 </div>
 
 <div class="wrap" id="app"></div>
-<div class="footer-note">Data tersimpan bersama di Google Sheets &mdash; dapat dilihat oleh siapa pun yang membuka tautan aplikasi ini.</div>
+<div class="footer-note">© 2026 Politeknik Negeri Padang &mdash; Jurusan Teknik Mesin.</div>
 
 <script>
 /* ================= KONFIGURASI PENYIMPANAN (Google Sheets) =================
@@ -2048,6 +2048,20 @@ async function uploadImageToDrive(dataUrl, filename){
   if(!r || !r.ok || !r.url) throw new Error(r && r.error ? r.error : 'Upload gagal');
   return r.url;
 }
+// Mencatat 1 baris rapi ke sheet "Log Scan Absensi" (Tanggal & Jam Upload, Prodi, Kelas,
+// Tanggal Perkuliahan, Mata Kuliah, Link Dokumen) supaya bisa dibaca langsung di spreadsheet
+// tanpa perlu buka aplikasi web ini. Dikirim terpisah dari safeSet(scans:...) yang menyimpan
+// state internal aplikasi -- kalau logScan gagal, tidak menghentikan proses upload utama.
+async function logScanToSheet(payload){
+  try{
+    await fetch(SHEETS_API_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action:'logScan', ...payload }),
+    });
+  }catch(e){
+    console.error('Gagal mencatat log scan:', e);
+  }
+}
 async function safeSet(key, value){
   try{
     // Body dikirim sebagai string biasa (bukan header application/json) supaya browser
@@ -2924,6 +2938,13 @@ function attachHandlers(){
       state.scans.push({ id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, dataUrl:driveUrl, uploadedAt:new Date().toISOString(), direkap:false });
       render();
       saveScans();
+      logScanToSheet({
+        prodi: currentProdi() ? currentProdi().nama : state.prodi,
+        kelas: state.kelas,
+        tanggalKuliah: tanggal,
+        matkul: mk ? mk.nama : '(tidak diketahui)',
+        url: driveUrl,
+      });
     }catch(err){
       alert('Gagal mengunggah gambar. Coba lagi.');
       submitBtn.disabled=false; submitBtn.textContent='↑ Upload Scan';

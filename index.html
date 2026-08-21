@@ -2129,6 +2129,7 @@ async function uploadImageToDrive(dataUrl, filename, logInfo){
     body: JSON.stringify({ action:'uploadImage', dataUrl, filename, log: logInfo || null }),
   });
   const r = await res.json();
+  if(window.__DEBUG_NOTIF__) alert('DEBUG uploadImage response: ' + JSON.stringify(r));
   if(!r || !r.ok || !r.url) throw new Error(r && r.error ? r.error : 'Upload gagal');
   return r.url;
 }

@@ -78,6 +78,49 @@
   .admin-toast .close:hover{color:var(--ink);}
   @keyframes toastIn{ from{opacity:0; transform:translateX(16px);} to{opacity:1; transform:translateX(0);} }
 
+  /* ---------- Notification bell + dropdown ---------- */
+  .notif-bell-wrap{position:relative;}
+  .notif-bell-btn{
+    position:relative; width:38px; height:38px; border-radius:50%;
+    border:1px solid rgba(255,255,255,.22); background:rgba(255,255,255,.1); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:17px;
+    transition:.15s;
+  }
+  .notif-bell-btn:hover{background:rgba(255,255,255,.18);}
+  .notif-bell-dot{
+    position:absolute; top:6px; right:7px; width:9px; height:9px; border-radius:50%;
+    background:var(--danger); border:1.5px solid var(--primary);
+  }
+  .notif-panel{
+    position:absolute; top:calc(100% + 10px); right:0; z-index:90;
+    width:320px; max-height:420px; overflow-y:auto;
+    background:var(--surface); color:var(--ink); border:1px solid var(--line); border-radius:var(--radius);
+    box-shadow:0 12px 32px rgba(15,35,64,.22);
+  }
+  .notif-panel-head{
+    position:sticky; top:0; background:var(--surface); z-index:1;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 14px; border-bottom:1px solid var(--line);
+  }
+  .notif-panel-head h4{margin:0; font-size:13.5px; font-weight:700;}
+  .notif-panel-head button{background:none; border:none; font-size:11.5px; color:var(--primary-light); font-weight:600;}
+  .notif-item{
+    display:flex; align-items:flex-start; gap:10px; padding:11px 14px;
+    border-bottom:1px solid var(--line); position:relative;
+  }
+  .notif-item:last-child{border-bottom:none;}
+  .notif-item.unread{background:#F3F8FE;}
+  .notif-item .icon{
+    width:30px; height:30px; border-radius:50%; background:var(--accent); color:var(--accent-ink);
+    display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:14px; margin-top:1px;
+  }
+  .notif-item .body{flex:1; min-width:0;}
+  .notif-item .title{font-size:12.5px; font-weight:700; color:var(--ink); line-height:1.35;}
+  .notif-item .sub{font-size:11px; color:var(--ink-soft); margin-top:2px;}
+  .notif-item .time{font-size:10.5px; color:var(--ink-soft); margin-top:4px; font-family:'IBM Plex Mono';}
+  .notif-item .unread-dot{width:7px; height:7px; border-radius:50%; background:var(--danger); flex-shrink:0; margin-top:6px;}
+  .notif-empty{padding:32px 16px; text-align:center; color:var(--ink-soft); font-size:12.5px;}
+
   /* ---------- Topbar ---------- */
   .topbar{
     position:sticky; top:0; z-index:40;
@@ -348,6 +391,7 @@
         <h1>Absensi Mahasiswa — Jurusan Teknik Mesin</h1>
       </div>
     </div>
+    <div class="notif-bell-wrap" id="notifBellWrap"></div>
     <div class="role-switch" id="roleSwitch"></div>
   </div>
 </div>
@@ -1906,6 +1950,8 @@ let state = {
   summaryMatkulId: null,
   summaryWeek: 1,
   semesterStart: null, // 'YYYY-MM-DD', tanggal Senin minggu pertama semester (per kelas)
+  notifications: [], // riwayat notifikasi upload untuk Admin: {id, prodi, kelas, matkul, tanggalKuliah, timestamp, read}
+  notifPanelOpen: false,
 };
 
 function currentProdi(){ return PRODI.find(p=>p.key===state.prodi); }
@@ -2126,10 +2172,18 @@ async function pollAdminNotif(){
     const res = await fetch(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(adminNotifSince));
     const r = await res.json();
     if(r && Array.isArray(r.rows) && r.rows.length){
-      r.rows.forEach(showAdminUploadToast);
+      r.rows.forEach(row=>{
+        showAdminUploadToast(row); // popup sementara, langsung terlihat
+        state.notifications.unshift({ // masuk ke riwayat/"story" notifikasi di bell
+          id: uid(), prodi: row.prodi, kelas: row.kelas, matkul: row.matkul,
+          tanggalKuliah: row.tanggalKuliah, timestamp: row.timestamp, read: false,
+        });
+      });
+      if(state.notifications.length>50) state.notifications = state.notifications.slice(0,50); // batasi riwayat
       const maxTs = r.rows.reduce((m,row)=> row.timestamp>m ? row.timestamp : m, adminNotifSince);
       adminNotifSince = maxTs;
     }
+    renderNotifBell(); // refresh juga teks waktu relatif ("X menit yang lalu") walau tidak ada notif baru
   }catch(e){
     console.error('Gagal cek notifikasi upload baru:', e);
   }
@@ -2160,6 +2214,7 @@ function showAdminUploadToast(row){
 /* ---------------- Render ---------------- */
 function render(){
   renderRoleSwitch();
+  renderNotifBell();
   const app = document.getElementById('app');
   app.innerHTML = `
     ${renderSelector()}
@@ -2175,6 +2230,77 @@ function renderRoleSwitch(){
     <button data-role="admin" class="${state.role==='admin'?'active':''}">Admin</button>
     <button data-role="ketua" class="${state.role==='ketua'?'active':''}">Ketua Kelas</button>
   `;
+}
+
+// Bell notifikasi (mirip notifikasi sosmed) -- HANYA tampil untuk role Admin, karena
+// notifikasi ini soal upload absensi yang perlu diketahui Admin. Menampilkan daftar
+// riwayat notifikasi (state.notifications), titik merah kalau ada yang belum dibaca,
+// dan waktu relatif ("2 menit yang lalu") yang dihitung ulang setiap render.
+function renderNotifBell(){
+  const wrap = document.getElementById('notifBellWrap');
+  if(!wrap) return;
+  if(state.role!=='admin'){ wrap.innerHTML=''; return; }
+  const unreadCount = state.notifications.filter(n=>!n.read).length;
+  const list = state.notifications;
+  wrap.innerHTML = `
+    <button class="notif-bell-btn" id="notifBellBtn" aria-label="Notifikasi">
+      &#128276;
+      ${unreadCount>0 ? '<span class="notif-bell-dot"></span>' : ''}
+    </button>
+    ${state.notifPanelOpen ? `
+      <div class="notif-panel" id="notifPanel">
+        <div class="notif-panel-head">
+          <h4>Notifikasi Upload</h4>
+          ${unreadCount>0 ? `<button id="notifMarkAllRead">Tandai semua dibaca</button>` : ''}
+        </div>
+        ${list.length ? list.map(n=>`
+          <div class="notif-item ${n.read?'':'unread'}">
+            <div class="icon">&#8593;</div>
+            <div class="body">
+              <div class="title">${escapeHtml(prodiKodeFromNama_(n.prodi))} - ${escapeHtml(n.kelas)} mengupload berkas</div>
+              <div class="sub">${escapeHtml(n.matkul||'')} &middot; ${escapeHtml(formatDate(n.tanggalKuliah))}</div>
+              <div class="time">${timeAgo(n.timestamp)}</div>
+            </div>
+            ${n.read?'':'<div class="unread-dot"></div>'}
+          </div>
+        `).join('') : `<div class="notif-empty">Belum ada notifikasi upload.</div>`}
+      </div>
+    ` : ''}
+  `;
+  const bellBtn = document.getElementById('notifBellBtn');
+  if(bellBtn) bellBtn.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    state.notifPanelOpen = !state.notifPanelOpen;
+    if(state.notifPanelOpen){
+      // buka panel -> tandai semua sudah dibaca (titik merah hilang), seperti notifikasi sosmed
+      state.notifications.forEach(n=> n.read = true);
+    }
+    renderNotifBell();
+  });
+  const markAllBtn = document.getElementById('notifMarkAllRead');
+  if(markAllBtn) markAllBtn.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    state.notifications.forEach(n=> n.read = true);
+    renderNotifBell();
+  });
+  const panel = document.getElementById('notifPanel');
+  if(panel) panel.addEventListener('click', e=> e.stopPropagation());
+}
+// Tutup panel notifikasi kalau klik di luar area bell/panel.
+document.addEventListener('click', ()=>{
+  if(state.notifPanelOpen){ state.notifPanelOpen = false; renderNotifBell(); }
+});
+// Format waktu relatif ala notifikasi sosmed: "baru saja", "5 menit yang lalu", "2 jam yang lalu", dst.
+function timeAgo(isoString){
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const diffSec = Math.max(0, Math.floor(diffMs/1000));
+  if(diffSec<60) return 'baru saja';
+  const diffMin = Math.floor(diffSec/60);
+  if(diffMin<60) return diffMin+' menit yang lalu';
+  const diffHour = Math.floor(diffMin/60);
+  if(diffHour<24) return diffHour+' jam yang lalu';
+  const diffDay = Math.floor(diffHour/24);
+  return diffDay+' hari yang lalu';
 }
 
 function renderSelector(){

@@ -53,6 +53,31 @@
   input,select{font-family:inherit;}
   ::selection{background:var(--accent); color:#fff;}
 
+  /* ---------- Admin notification toast (upload real-time) ---------- */
+  .admin-toast-container{
+    position:fixed; top:74px; right:20px; z-index:80;
+    display:flex; flex-direction:column; gap:10px; align-items:flex-end;
+    pointer-events:none;
+  }
+  .admin-toast{
+    pointer-events:auto;
+    display:flex; align-items:flex-start; gap:10px;
+    background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:var(--radius); box-shadow:var(--shadow);
+    padding:12px 14px; min-width:240px; max-width:320px;
+    animation:toastIn .18s ease-out;
+  }
+  .admin-toast .icon{
+    width:28px; height:28px; border-radius:50%; background:var(--accent); color:var(--accent-ink);
+    display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:14px;
+  }
+  .admin-toast .body{flex:1; min-width:0;}
+  .admin-toast .title{font-size:13px; font-weight:700; color:var(--ink); line-height:1.3;}
+  .admin-toast .sub{font-size:11.5px; color:var(--ink-soft); margin-top:2px;}
+  .admin-toast .close{background:none; border:none; color:var(--ink-soft); font-size:14px; padding:0 2px; flex-shrink:0;}
+  .admin-toast .close:hover{color:var(--ink);}
+  @keyframes toastIn{ from{opacity:0; transform:translateX(16px);} to{opacity:1; transform:translateX(0);} }
+
   /* ---------- Topbar ---------- */
   .topbar{
     position:sticky; top:0; z-index:40;
@@ -328,6 +353,7 @@
 </div>
 
 <div class="wrap" id="app"></div>
+<div class="admin-toast-container" id="adminToastContainer"></div>
 <div class="footer-note">© 2026 Politeknik Negeri Padang &mdash; Jurusan Teknik Mesin.</div>
 
 <script>
@@ -2079,6 +2105,58 @@ async function safeSet(key, value){
 
 function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
 
+/* ---------------- Notifikasi Admin real-time (upload Ketua Kelas) ---------------- */
+// Hanya aktif untuk role Admin. Mengecek berkala (polling) ke Apps Script apakah ada
+// baris baru masuk di sheet "Log Scan Absensi" sejak terakhir kali dicek -- lintas
+// semua prodi/kelas, supaya Admin tetap dapat notifikasi walau sedang membuka kelas lain.
+const ADMIN_NOTIF_POLL_MS = 20000; // cek setiap 20 detik
+let adminNotifTimer = null;
+let adminNotifSince = null;
+
+function startAdminNotifPolling(){
+  if(adminNotifTimer) return; // sudah jalan, tidak perlu mulai lagi
+  adminNotifSince = new Date().toISOString(); // hanya notif upload BARU sejak Admin login, bukan histori lama
+  adminNotifTimer = setInterval(pollAdminNotif, ADMIN_NOTIF_POLL_MS);
+}
+function stopAdminNotifPolling(){
+  if(adminNotifTimer){ clearInterval(adminNotifTimer); adminNotifTimer = null; }
+}
+async function pollAdminNotif(){
+  try{
+    const res = await fetch(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(adminNotifSince));
+    const r = await res.json();
+    if(r && Array.isArray(r.rows) && r.rows.length){
+      r.rows.forEach(showAdminUploadToast);
+      const maxTs = r.rows.reduce((m,row)=> row.timestamp>m ? row.timestamp : m, adminNotifSince);
+      adminNotifSince = maxTs;
+    }
+  }catch(e){
+    console.error('Gagal cek notifikasi upload baru:', e);
+  }
+}
+// Cari kode singkat prodi (mis. "D3-TME") dari nama lengkap yang tersimpan di sheet
+// (mis. "D3 Teknik Mesin"), lalu format spasi supaya jadi "D3 TME" sesuai contoh yang diminta.
+function prodiKodeFromNama_(nama){
+  const p = PRODI.find(x=>x.nama===nama);
+  return p ? p.kode.replace('-', ' ') : nama;
+}
+function showAdminUploadToast(row){
+  const container = document.getElementById('adminToastContainer');
+  if(!container) return;
+  const el = document.createElement('div');
+  el.className = 'admin-toast';
+  el.innerHTML = `
+    <div class="icon">&#8593;</div>
+    <div class="body">
+      <div class="title">${escapeHtml(prodiKodeFromNama_(row.prodi))} - ${escapeHtml(row.kelas)} mengupload berkas</div>
+      <div class="sub">${escapeHtml(row.matkul||'')} &middot; ${escapeHtml(formatDate(row.tanggalKuliah))}</div>
+    </div>
+    <button class="close" aria-label="Tutup">&times;</button>`;
+  el.querySelector('.close').addEventListener('click', ()=> el.remove());
+  container.appendChild(el);
+  setTimeout(()=>{ if(el.isConnected) el.remove(); }, 8000); // auto-hilang setelah 8 detik
+}
+
 /* ---------------- Render ---------------- */
 function render(){
   renderRoleSwitch();
@@ -2695,6 +2773,7 @@ function renderModal(){
         state.role = 'admin';
         state.adminUnlocked = true; // ingat sampai halaman ini di-reload, tidak perlu PIN lagi
         state.modal = null;
+        startAdminNotifPolling();
         render();
       } else {
         document.getElementById('adminPinError').style.display = 'block';
@@ -2818,6 +2897,7 @@ function attachHandlers(){
       if(state.adminUnlocked){
         // PIN sudah pernah benar di sesi ini -> langsung masuk tanpa minta PIN lagi.
         state.role = 'admin';
+        startAdminNotifPolling();
         render();
         return;
       }
@@ -2828,6 +2908,7 @@ function attachHandlers(){
       return;
     }
     state.role = target;
+    stopAdminNotifPolling(); // keluar dari mode Admin -> tidak perlu polling notifikasi lagi
     render();
   }));
   document.querySelectorAll('[data-open-ketua-upload-pin]').forEach(b=> b.addEventListener('click', ()=>{

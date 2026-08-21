@@ -2158,17 +2158,43 @@ function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now
 // Hanya aktif untuk role Admin. Mengecek berkala (polling) ke Apps Script apakah ada
 // baris baru masuk di sheet "Log Scan Absensi" sejak terakhir kali dicek -- lintas
 // semua prodi/kelas, supaya Admin tetap dapat notifikasi walau sedang membuka kelas lain.
-const ADMIN_NOTIF_POLL_MS = 20000; // cek setiap 20 detik
+const ADMIN_NOTIF_POLL_MS = 5000; // cek setiap 5 detik
+const ADMIN_NOTIF_HISTORY_HOURS = 24; // saat Admin baru login, tampilkan dulu histori upload beberapa jam terakhir
 let adminNotifTimer = null;
 let adminNotifSince = null;
 
 function startAdminNotifPolling(){
   if(adminNotifTimer) return; // sudah jalan, tidak perlu mulai lagi
-  adminNotifSince = new Date().toISOString(); // hanya notif upload BARU sejak Admin login, bukan histori lama
+  // Mulai dari beberapa jam ke belakang (bukan dari 'sekarang') supaya upload yang baru saja
+  // terjadi -- termasuk sesaat sebelum Admin login -- tetap langsung terlihat begitu dibuka,
+  // bukan cuma yang terjadi SETELAH login. Ini ditandai "sudah dibaca" karena sifatnya histori,
+  // beda dengan upload baru yang datang lewat polling berikutnya (itu baru trigger toast+unread).
+  adminNotifSince = new Date(Date.now() - ADMIN_NOTIF_HISTORY_HOURS*3600*1000).toISOString();
+  loadInitialNotifHistory();
   adminNotifTimer = setInterval(pollAdminNotif, ADMIN_NOTIF_POLL_MS);
 }
 function stopAdminNotifPolling(){
   if(adminNotifTimer){ clearInterval(adminNotifTimer); adminNotifTimer = null; }
+}
+async function loadInitialNotifHistory(){
+  try{
+    const res = await fetch(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(adminNotifSince));
+    const r = await res.json();
+    if(r && Array.isArray(r.rows) && r.rows.length){
+      r.rows.forEach(row=>{
+        state.notifications.unshift({
+          id: uid(), prodi: row.prodi, kelas: row.kelas, matkul: row.matkul,
+          tanggalKuliah: row.tanggalKuliah, timestamp: row.timestamp, read: true, // histori lama -> langsung dianggap sudah dibaca, tanpa toast
+        });
+      });
+      if(state.notifications.length>50) state.notifications = state.notifications.slice(0,50);
+      const maxTs = r.rows.reduce((m,row)=> row.timestamp>m ? row.timestamp : m, adminNotifSince);
+      adminNotifSince = maxTs;
+      renderNotifBell();
+    }
+  }catch(e){
+    console.error('Gagal memuat histori notifikasi:', e);
+  }
 }
 async function pollAdminNotif(){
   try{

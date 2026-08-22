@@ -1961,6 +1961,7 @@ let state = {
   semesterStart: null, // 'YYYY-MM-DD', tanggal Senin minggu pertama semester (per kelas)
   notifications: [], // riwayat notifikasi upload untuk Admin: {id, prodi, kelas, matkul, tanggalKuliah, timestamp, read}
   notifPanelOpen: false,
+  notifError: null, // pesan error terakhir (kalau ada) saat mengambil notifikasi dari server -- ditampilkan di panel lonceng supaya kelihatan tanpa perlu buka console
 };
 
 function currentProdi(){ return PRODI.find(p=>p.key===state.prodi); }
@@ -2210,8 +2211,12 @@ function stopAdminNotifPolling(){
 }
 async function loadInitialNotifHistory(){
   try{
-    const res = await fetch(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(adminNotifSince));
+    const res = await fetch(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(adminNotifSince), { cache:'no-store' });
+    if(!res.ok) throw new Error('HTTP ' + res.status + ' dari server');
     const r = await res.json();
+    if(window.__DEBUG_NOTIF__) alert('DEBUG loadInitialNotifHistory response: ' + JSON.stringify(r));
+    if(r && r.error) throw new Error(String(r.error));
+    state.notifError = null;
     if(r && Array.isArray(r.rows) && r.rows.length){
       // Kalau localStorage belum pernah menyimpan apa-apa (pertama kali Admin pakai perangkat
       // ini), anggap semua histori yang ada sekarang sudah "diketahui" -- supaya tidak langsung
@@ -2233,16 +2238,23 @@ async function loadInitialNotifHistory(){
       if(state.notifications.length>50) state.notifications = state.notifications.slice(0,50);
       const maxTs = r.rows.reduce((m,row)=> row.timestamp>m ? row.timestamp : m, adminNotifSince);
       adminNotifSince = maxTs;
-      renderNotifBell();
     }
+    renderNotifBell();
   }catch(e){
     console.error('Gagal memuat histori notifikasi:', e);
+    state.notifError = 'Gagal memuat notifikasi: ' + String(e.message || e);
+    if(window.__DEBUG_NOTIF__) alert('DEBUG loadInitialNotifHistory GAGAL: ' + String(e));
+    renderNotifBell();
   }
 }
 async function pollAdminNotif(){
   try{
-    const res = await fetch(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(adminNotifSince));
+    const res = await fetch(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(adminNotifSince), { cache:'no-store' });
+    if(!res.ok) throw new Error('HTTP ' + res.status + ' dari server');
     const r = await res.json();
+    if(window.__DEBUG_NOTIF__) alert('DEBUG pollAdminNotif response: ' + JSON.stringify(r));
+    if(r && r.error) throw new Error(String(r.error));
+    state.notifError = null;
     if(r && Array.isArray(r.rows) && r.rows.length){
       r.rows.forEach(row=>{
         showAdminUploadToast(row); // popup sementara, langsung terlihat
@@ -2260,6 +2272,9 @@ async function pollAdminNotif(){
     renderNotifBell(); // refresh juga teks waktu relatif ("X menit yang lalu") walau tidak ada notif baru
   }catch(e){
     console.error('Gagal cek notifikasi upload baru:', e);
+    state.notifError = 'Gagal memuat notifikasi: ' + String(e.message || e);
+    if(window.__DEBUG_NOTIF__) alert('DEBUG pollAdminNotif GAGAL: ' + String(e));
+    renderNotifBell();
   }
 }
 // Cari kode singkat prodi (mis. "D3-TME") dari nama lengkap yang tersimpan di sheet
@@ -2351,6 +2366,7 @@ function renderNotifBell(){
           <h4>Notifikasi Upload</h4>
           ${unreadCount>0 ? `<button id="notifMarkAllRead">Tandai semua dibaca</button>` : ''}
         </div>
+        ${state.notifError ? `<div class="notif-empty" style="color:var(--danger); text-align:left; padding:10px 14px;">&#9888; ${escapeHtml(state.notifError)}</div>` : ''}
         ${list.length ? list.map(n=>`
           <div class="notif-item ${n.read?'':'unread'}">
             <div class="icon">&#8593;</div>

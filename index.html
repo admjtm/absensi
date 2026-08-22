@@ -1962,7 +1962,6 @@ let state = {
   notifications: [], // riwayat notifikasi upload untuk Admin: {id, prodi, kelas, matkul, tanggalKuliah, timestamp, read}
   notifPanelOpen: false,
   notifError: null, // pesan error terakhir (kalau ada) saat mengambil notifikasi dari server -- ditampilkan di panel lonceng supaya kelihatan tanpa perlu buka console
-  notifLoading: false, // true saat sedang mengambil ulang daftar notifikasi langsung dari server (dipicu setiap kali lonceng diklik)
 };
 
 function currentProdi(){ return PRODI.find(p=>p.key===state.prodi); }
@@ -2346,48 +2345,6 @@ function renderRoleSwitch(){
   `;
 }
 
-// Dipanggil SETIAP KALI lonceng diklik untuk membuka panel -- mengambil ULANG daftar
-// notifikasi LANGSUNG dari server saat itu juga (bukan mengandalkan data yang mungkin
-// belum selesai dimuat di background). Ini menjamin "story" di panel selalu terisi
-// dengan data terkini persis saat diklik, tidak tergantung timing polling/history awal.
-async function fetchNotifPanelFresh(){
-  state.notifLoading = true;
-  renderNotifBell();
-  const sinceIso = new Date(Date.now() - ADMIN_NOTIF_HISTORY_HOURS*3600*1000).toISOString();
-  try{
-    const res = await fetch(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(sinceIso), { cache:'no-store' });
-    if(!res.ok) throw new Error('HTTP ' + res.status + ' dari server');
-    const r = await res.json();
-    if(window.__DEBUG_NOTIF__) alert('DEBUG fetchNotifPanelFresh response: ' + JSON.stringify(r));
-    if(r && r.error) throw new Error(String(r.error));
-    state.notifError = null;
-    const rows = (r && Array.isArray(r.rows)) ? r.rows : [];
-    // Urutkan terbaru dulu, lalu batasi 50 -- gantikan TOTAL isi state.notifications supaya
-    // panel selalu menunjukkan data server yang sebenarnya, bukan tumpukan data lama/duplikat.
-    const lastReadAt = getNotifLastReadAt_();
-    state.notifications = rows
-      .slice()
-      .sort((a,b)=> b.timestamp.localeCompare(a.timestamp))
-      .slice(0,50)
-      .map(row=>({
-        id: uid(), prodi: row.prodi, kelas: row.kelas, matkul: row.matkul,
-        tanggalKuliah: row.tanggalKuliah, timestamp: row.timestamp,
-        read: lastReadAt!==null && row.timestamp <= lastReadAt,
-      }));
-    // Majukan penanda polling supaya siklus berikutnya tidak menganggap data ini "baru" lagi.
-    if(rows.length){
-      const maxTs = rows.reduce((m,row)=> row.timestamp>m ? row.timestamp : m, sinceIso);
-      if(adminNotifSince===null || maxTs>adminNotifSince) adminNotifSince = maxTs;
-    }
-  }catch(e){
-    console.error('Gagal memuat ulang notifikasi (klik lonceng):', e);
-    state.notifError = 'Gagal memuat notifikasi: ' + String(e.message || e);
-    if(window.__DEBUG_NOTIF__) alert('DEBUG fetchNotifPanelFresh GAGAL: ' + String(e));
-  }
-  state.notifLoading = false;
-  renderNotifBell();
-}
-
 // Bell notifikasi (mirip notifikasi sosmed) -- HANYA tampil untuk role Admin, karena
 // notifikasi ini soal upload absensi yang perlu diketahui Admin. Menampilkan daftar
 // riwayat notifikasi (state.notifications), titik merah kalau ada yang belum dibaca,
@@ -2410,7 +2367,7 @@ function renderNotifBell(){
           ${unreadCount>0 ? `<button id="notifMarkAllRead">Tandai semua dibaca</button>` : ''}
         </div>
         ${state.notifError ? `<div class="notif-empty" style="color:var(--danger); text-align:left; padding:10px 14px;">&#9888; ${escapeHtml(state.notifError)}</div>` : ''}
-        ${state.notifLoading ? `<div class="notif-empty">Memuat notifikasi&hellip;</div>` : (list.length ? list.map(n=>`
+        ${list.length ? list.map(n=>`
           <div class="notif-item ${n.read?'':'unread'}">
             <div class="icon">&#8593;</div>
             <div class="body">
@@ -2420,7 +2377,7 @@ function renderNotifBell(){
             </div>
             ${n.read?'':'<div class="unread-dot"></div>'}
           </div>
-        `).join('') : `<div class="notif-empty">Belum ada notifikasi upload.</div>`)}
+        `).join('') : `<div class="notif-empty">Belum ada notifikasi upload.</div>`}
       </div>
     ` : ''}
   `;
@@ -2429,14 +2386,10 @@ function renderNotifBell(){
     e.stopPropagation();
     state.notifPanelOpen = !state.notifPanelOpen;
     if(state.notifPanelOpen){
-      // buka panel -> tandai semua sudah dibaca (titik merah hilang) SEGERA di layar,
-      // sambil di belakang layar mengambil ULANG data terbaru langsung dari server --
-      // supaya "story" selalu terisi persis saat diklik, apa pun yang terjadi di background.
+      // buka panel -> tandai semua sudah dibaca (titik merah hilang), seperti notifikasi sosmed,
+      // dan simpan waktunya ke localStorage supaya tetap "sudah dibaca" walau halaman di-reload.
       state.notifications.forEach(n=> n.read = true);
       setNotifLastReadAt_(new Date().toISOString());
-      renderNotifBell();
-      fetchNotifPanelFresh();
-      return;
     }
     renderNotifBell();
   });

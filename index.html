@@ -2176,16 +2176,31 @@ function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now
 // baris baru masuk di sheet "Log Scan Absensi" sejak terakhir kali dicek -- lintas
 // semua prodi/kelas, supaya Admin tetap dapat notifikasi walau sedang membuka kelas lain.
 const ADMIN_NOTIF_POLL_MS = 5000; // cek setiap 5 detik
-const ADMIN_NOTIF_HISTORY_HOURS = 24; // saat Admin baru login, tampilkan dulu histori upload beberapa jam terakhir
+const ADMIN_NOTIF_HISTORY_HOURS = 24*7; // riwayat notifikasi upload disimpan/ditampilkan sampai 7 hari
+const NOTIF_LAST_READ_KEY = 'absensiJtm_notifLastReadAt'; // localStorage: kapan Admin (di PERANGKAT ini) terakhir buka lonceng
 let adminNotifTimer = null;
 let adminNotifSince = null;
+
+// Waktu terakhir Admin membuka/menandai-baca notifikasi DI PERANGKAT INI, disimpan permanen
+// di localStorage (bukan cuma memori) -- supaya upload yang terjadi SEBELUM Admin sempat
+// membuka halaman tetap ditandai belum-dibaca (titik merah tetap muncul), bukan otomatis
+// dianggap sudah dibaca hanya karena kejadiannya lebih dulu daripada Admin memuat halaman.
+function getNotifLastReadAt_(){
+  try{
+    const v = localStorage.getItem(NOTIF_LAST_READ_KEY);
+    return v || null;
+  }catch(e){ return null; }
+}
+function setNotifLastReadAt_(iso){
+  try{ localStorage.setItem(NOTIF_LAST_READ_KEY, iso); }catch(e){ /* abaikan kalau localStorage tidak tersedia */ }
+}
 
 function startAdminNotifPolling(){
   if(adminNotifTimer) return; // sudah jalan, tidak perlu mulai lagi
   // Mulai dari beberapa jam ke belakang (bukan dari 'sekarang') supaya upload yang baru saja
   // terjadi -- termasuk sesaat sebelum Admin login -- tetap langsung terlihat begitu dibuka,
-  // bukan cuma yang terjadi SETELAH login. Ini ditandai "sudah dibaca" karena sifatnya histori,
-  // beda dengan upload baru yang datang lewat polling berikutnya (itu baru trigger toast+unread).
+  // bukan cuma yang terjadi SETELAH login. Status baca/belum-dibaca-nya sendiri ditentukan
+  // dengan membandingkan ke NOTIF_LAST_READ_KEY di localStorage, bukan otomatis "sudah dibaca".
   adminNotifSince = new Date(Date.now() - ADMIN_NOTIF_HISTORY_HOURS*3600*1000).toISOString();
   loadInitialNotifHistory();
   adminNotifTimer = setInterval(pollAdminNotif, ADMIN_NOTIF_POLL_MS);
@@ -2198,10 +2213,21 @@ async function loadInitialNotifHistory(){
     const res = await fetch(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(adminNotifSince));
     const r = await res.json();
     if(r && Array.isArray(r.rows) && r.rows.length){
+      // Kalau localStorage belum pernah menyimpan apa-apa (pertama kali Admin pakai perangkat
+      // ini), anggap semua histori yang ada sekarang sudah "diketahui" -- supaya tidak langsung
+      // muncul puluhan notifikasi lama menumpuk begitu pertama kali dipakai. Upload BARU setelah
+      // titik ini tetap akan terdeteksi belum-dibaca seperti biasa.
+      let lastReadAt = getNotifLastReadAt_();
+      if(lastReadAt===null){
+        const maxTsAwal = r.rows.reduce((m,row)=> row.timestamp>m ? row.timestamp : m, adminNotifSince);
+        lastReadAt = maxTsAwal;
+        setNotifLastReadAt_(lastReadAt);
+      }
       r.rows.forEach(row=>{
         state.notifications.unshift({
           id: uid(), prodi: row.prodi, kelas: row.kelas, matkul: row.matkul,
-          tanggalKuliah: row.tanggalKuliah, timestamp: row.timestamp, read: true, // histori lama -> langsung dianggap sudah dibaca, tanpa toast
+          tanggalKuliah: row.tanggalKuliah, timestamp: row.timestamp,
+          read: row.timestamp <= lastReadAt, // belum pernah dibuka Admin di perangkat ini -> tetap belum dibaca
         });
       });
       if(state.notifications.length>50) state.notifications = state.notifications.slice(0,50);
@@ -2228,6 +2254,8 @@ async function pollAdminNotif(){
       if(state.notifications.length>50) state.notifications = state.notifications.slice(0,50); // batasi riwayat
       const maxTs = r.rows.reduce((m,row)=> row.timestamp>m ? row.timestamp : m, adminNotifSince);
       adminNotifSince = maxTs;
+      // TIDAK memajukan NOTIF_LAST_READ_KEY di sini -- notifikasi baru ini harus tetap
+      // tampil belum-dibaca (titik merah) sampai Admin benar-benar membuka lonceng.
     }
     renderNotifBell(); // refresh juga teks waktu relatif ("X menit yang lalu") walau tidak ada notif baru
   }catch(e){
@@ -2342,8 +2370,10 @@ function renderNotifBell(){
     e.stopPropagation();
     state.notifPanelOpen = !state.notifPanelOpen;
     if(state.notifPanelOpen){
-      // buka panel -> tandai semua sudah dibaca (titik merah hilang), seperti notifikasi sosmed
+      // buka panel -> tandai semua sudah dibaca (titik merah hilang), seperti notifikasi sosmed,
+      // dan simpan waktunya ke localStorage supaya tetap "sudah dibaca" walau halaman di-reload.
       state.notifications.forEach(n=> n.read = true);
+      setNotifLastReadAt_(new Date().toISOString());
     }
     renderNotifBell();
   });
@@ -2351,6 +2381,7 @@ function renderNotifBell(){
   if(markAllBtn) markAllBtn.addEventListener('click', (e)=>{
     e.stopPropagation();
     state.notifications.forEach(n=> n.read = true);
+    setNotifLastReadAt_(new Date().toISOString());
     renderNotifBell();
   });
   const panel = document.getElementById('notifPanel');

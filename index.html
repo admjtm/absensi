@@ -2260,7 +2260,25 @@ function showAdminUploadToast(row){
     <button class="close" aria-label="Tutup">&times;</button>`;
   el.querySelector('.close').addEventListener('click', ()=> el.remove());
   container.appendChild(el);
-  setTimeout(()=>{ if(el.isConnected) el.remove(); }, 8000); // auto-hilang setelah 8 detik
+  setTimeout(()=>{ if(el.isConnected) el.remove(); }, 5000); // auto-hilang setelah 5 detik
+}
+// Dipanggil LANGSUNG (tanpa menunggu polling 5 detik) begitu upload di perangkat ini sendiri
+// berhasil -- supaya orang yang baru saja upload langsung lihat toast + titik merah di lonceng,
+// tidak tergantung request kedua ke backend yang kadang telat/gagal. Polling (pollAdminNotif)
+// tetap jalan seperti biasa untuk menangkap upload dari perangkat/sesi LAIN.
+function notifyLocalUploadSuccess(row){
+  showAdminUploadToast(row); // toast selalu muncul untuk siapapun yang upload, walau bukan Admin
+  if(state.role==='admin'){
+    state.notifications.unshift({
+      id: uid(), prodi: row.prodi, kelas: row.kelas, matkul: row.matkul,
+      tanggalKuliah: row.tanggalKuliah, timestamp: row.timestamp, read: false,
+    });
+    if(state.notifications.length>50) state.notifications = state.notifications.slice(0,50);
+    // Majukan penanda "since" supaya polling berikutnya tidak menampilkan toast kedua
+    // untuk upload yang sama begitu backend selesai mencatatnya.
+    if(adminNotifSince===null || row.timestamp>adminNotifSince) adminNotifSince = row.timestamp;
+    renderNotifBell();
+  }
 }
 
 /* ---------------- Render ---------------- */
@@ -3195,13 +3213,17 @@ function attachHandlers(){
       submitBtn.textContent = 'Menyimpan foto...';
       // Info notifikasi dikirim BERSAMAAN dengan foto dalam 1 request (lihat komentar di
       // uploadImageToDrive) supaya pencatatan notifikasi tidak pernah lolos gagal sendirian.
-      const driveUrl = await uploadImageToDrive(compressed, 'scan-' + tanggal + '-' + uid() + '.jpg', {
+      const logInfo = {
         prodi: currentProdi() ? currentProdi().nama : state.prodi,
         kelas: state.kelas,
         tanggalKuliah: tanggal,
         matkul: mk ? mk.nama : '(tidak diketahui)',
-      });
+      };
+      const driveUrl = await uploadImageToDrive(compressed, 'scan-' + tanggal + '-' + uid() + '.jpg', logInfo);
       state.scans.push({ id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, dataUrl:driveUrl, uploadedAt:new Date().toISOString(), direkap:false });
+      // Tampilkan notifikasi (toast + titik merah lonceng) SEKARANG JUGA, tidak menunggu
+      // siklus polling 5 detik -- lihat notifyLocalUploadSuccess().
+      notifyLocalUploadSuccess({ ...logInfo, timestamp: new Date().toISOString() });
       render();
       saveScans();
     }catch(err){

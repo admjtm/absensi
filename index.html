@@ -1941,12 +1941,34 @@ function setKetuaUploadUnlockedToday(){
   catch(e){ /* abaikan -- tidak fatal, cuma PIN akan diminta lagi tiap buka */ }
 }
 
+// PERBAIKAN NOTIFIKASI: dulu status "sudah pernah masuk mode Admin" (adminUnlocked) cuma
+// disimpan di memori (variable JS biasa), jadi HILANG setiap halaman di-reload/dibuka ulang.
+// Akibatnya perangkat yang tadinya sudah login Admin (misalnya komputer admin) balik lagi
+// jadi "belum login", polling notifikasi berhenti, dan notifikasi/lonceng tidak pernah
+// update lagi sampai PIN dimasukkan ulang secara manual -- ini penyebab utama kenapa
+// notifikasi cuma kelihatan di HP (yang kebetulan tab-nya tidak pernah di-reload) tapi
+// tidak muncul di komputer. Sekarang status ini disimpan permanen di localStorage per
+// perangkat/browser, supaya begitu 1x login Admin di suatu perangkat, perangkat itu akan
+// terus otomatis memantau notifikasi upload walau halaman dibuka ulang atau ditutup-buka lagi.
+const ADMIN_UNLOCKED_KEY = 'absensiJtm_adminUnlocked';
+function isAdminUnlockedPersisted_(){
+  try{ return localStorage.getItem(ADMIN_UNLOCKED_KEY) === '1'; }
+  catch(e){ return false; }
+}
+function setAdminUnlockedPersisted_(v){
+  try{
+    if(v) localStorage.setItem(ADMIN_UNLOCKED_KEY, '1');
+    else localStorage.removeItem(ADMIN_UNLOCKED_KEY);
+  }catch(e){ /* localStorage diblokir/penuh -- abaikan, tidak fatal */ }
+}
+
 let state = {
   role: 'ketua', // 'admin' | 'ketua' -- tampilan awal saat website dibuka adalah Ketua Kelas;
                  // untuk masuk Mode Admin harus klik tombol "Admin" lalu masukkan PIN.
-  adminUnlocked: false, // sekali PIN benar dimasukkan, tetap "true" selama sesi/tab browser ini terbuka --
-                         // jadi pindah bolak-balik Admin <-> Ketua tidak perlu masukkan PIN berulang.
-                         // Reset ke false lagi kalau halaman di-reload/dibuka ulang.
+  adminUnlocked: isAdminUnlockedPersisted_(), // true kalau PIN Admin PERNAH benar di perangkat ini
+                         // sebelumnya (disimpan di localStorage) -- jadi pindah bolak-balik
+                         // Admin <-> Ketua, atau reload halaman, tidak perlu masukkan PIN berulang,
+                         // dan polling notifikasi bisa otomatis lanjut jalan di perangkat ini.
   prodi: PRODI[0].key,
   kelas: PRODI[0].kelas[0],
   tab: 'upload', // mahasiswa | matkul | upload | rekap
@@ -2196,6 +2218,11 @@ function setNotifLastReadAt_(iso){
   try{ localStorage.setItem(NOTIF_LAST_READ_KEY, iso); }catch(e){ /* abaikan kalau localStorage tidak tersedia */ }
 }
 
+// PENTING: polling ini SENGAJA tidak lagi dikaitkan dengan tab/role yang sedang tampil di
+// layar (dulu berhenti setiap kali pindah dari tampilan Admin ke Ketua Kelas). Selama
+// perangkat ini pernah login Admin (adminUnlocked), polling tetap jalan di belakang layar
+// walau lagi melihat tampilan Ketua Kelas -- supaya lonceng & riwayat tetap ter-update dan
+// toast tetap muncul begitu Admin pindah balik ke tampilan Admin, tanpa perlu login ulang.
 function startAdminNotifPolling(){
   if(adminNotifTimer) return; // sudah jalan, tidak perlu mulai lagi
   // Mulai dari beberapa jam ke belakang (bukan dari 'sekarang') supaya upload yang baru saja
@@ -2208,6 +2235,13 @@ function startAdminNotifPolling(){
 }
 function stopAdminNotifPolling(){
   if(adminNotifTimer){ clearInterval(adminNotifTimer); adminNotifTimer = null; }
+}
+// Buang notifikasi yang sudah lebih tua dari 7 hari dari daftar riwayat di lonceng, dihitung
+// sejak waktu upload-nya masing-masing -- supaya riwayat betul-betul "bertahan 7 hari sejak
+// notifikasi awal", bukan cuma dibatasi jumlah item.
+function pruneOldNotifications_(){
+  const cutoff = Date.now() - ADMIN_NOTIF_HISTORY_HOURS*3600*1000;
+  state.notifications = state.notifications.filter(n=> new Date(n.timestamp).getTime() >= cutoff);
 }
 async function loadInitialNotifHistory(){
   try{
@@ -2235,7 +2269,7 @@ async function loadInitialNotifHistory(){
           read: row.timestamp <= lastReadAt, // belum pernah dibuka Admin di perangkat ini -> tetap belum dibaca
         });
       });
-      if(state.notifications.length>50) state.notifications = state.notifications.slice(0,50);
+      pruneOldNotifications_();
       const maxTs = r.rows.reduce((m,row)=> row.timestamp>m ? row.timestamp : m, adminNotifSince);
       adminNotifSince = maxTs;
     }
@@ -2263,7 +2297,7 @@ async function pollAdminNotif(){
           tanggalKuliah: row.tanggalKuliah, timestamp: row.timestamp, read: false,
         });
       });
-      if(state.notifications.length>50) state.notifications = state.notifications.slice(0,50); // batasi riwayat
+      pruneOldNotifications_(); // batasi riwayat sampai 7 hari terakhir saja
       const maxTs = r.rows.reduce((m,row)=> row.timestamp>m ? row.timestamp : m, adminNotifSince);
       adminNotifSince = maxTs;
       // TIDAK memajukan NOTIF_LAST_READ_KEY di sini -- notifikasi baru ini harus tetap
@@ -2306,22 +2340,24 @@ function showAdminUploadToast(row){
   setTimeout(()=>{ if(el.isConnected) el.remove(); }, 5000); // auto-hilang setelah 5 detik
 }
 // Dipanggil LANGSUNG (tanpa menunggu polling 5 detik) begitu upload di perangkat ini sendiri
-// berhasil -- supaya orang yang baru saja upload langsung lihat toast + titik merah di lonceng,
+// berhasil -- supaya Admin yang baru saja upload langsung lihat toast + titik merah di lonceng,
 // tidak tergantung request kedua ke backend yang kadang telat/gagal. Polling (pollAdminNotif)
 // tetap jalan seperti biasa untuk menangkap upload dari perangkat/sesi LAIN.
+// CATATAN: notifikasi ini HANYA untuk Admin. Kalau yang upload adalah Ketua Kelas di
+// perangkat yang bukan Admin, tidak ada toast/lonceng yang muncul sama sekali di perangkat
+// itu -- Ketua Kelas cukup tahu uploadnya berhasil lewat tampilan daftar scan seperti biasa.
 function notifyLocalUploadSuccess(row){
-  showAdminUploadToast(row); // toast selalu muncul untuk siapapun yang upload, walau bukan Admin
-  if(state.role==='admin'){
-    state.notifications.unshift({
-      id: uid(), prodi: row.prodi, kelas: row.kelas, matkul: row.matkul,
-      tanggalKuliah: row.tanggalKuliah, timestamp: row.timestamp, read: false,
-    });
-    if(state.notifications.length>50) state.notifications = state.notifications.slice(0,50);
-    // Majukan penanda "since" supaya polling berikutnya tidak menampilkan toast kedua
-    // untuk upload yang sama begitu backend selesai mencatatnya.
-    if(adminNotifSince===null || row.timestamp>adminNotifSince) adminNotifSince = row.timestamp;
-    renderNotifBell();
-  }
+  if(!state.adminUnlocked) return; // bukan perangkat Admin -> tidak ada notifikasi apapun
+  showAdminUploadToast(row);
+  state.notifications.unshift({
+    id: uid(), prodi: row.prodi, kelas: row.kelas, matkul: row.matkul,
+    tanggalKuliah: row.tanggalKuliah, timestamp: row.timestamp, read: false,
+  });
+  pruneOldNotifications_();
+  // Majukan penanda "since" supaya polling berikutnya tidak menampilkan toast kedua
+  // untuk upload yang sama begitu backend selesai mencatatnya.
+  if(adminNotifSince===null || row.timestamp>adminNotifSince) adminNotifSince = row.timestamp;
+  renderNotifBell();
 }
 
 /* ---------------- Render ---------------- */
@@ -3014,7 +3050,8 @@ function renderModal(){
       e.preventDefault();
       if(pinInput.value === ADMIN_PIN){
         state.role = 'admin';
-        state.adminUnlocked = true; // ingat sampai halaman ini di-reload, tidak perlu PIN lagi
+        state.adminUnlocked = true; // diingat permanen (localStorage) di perangkat ini, tidak perlu PIN lagi
+        setAdminUnlockedPersisted_(true);
         state.modal = null;
         startAdminNotifPolling();
         render();
@@ -3151,7 +3188,10 @@ function attachHandlers(){
       return;
     }
     state.role = target;
-    stopAdminNotifPolling(); // keluar dari mode Admin -> tidak perlu polling notifikasi lagi
+    // CATATAN: polling notifikasi TIDAK dihentikan lagi di sini walau pindah ke tampilan
+    // Ketua Kelas -- dulu dihentikan setiap kali pindah, sehingga perangkat Admin yang
+    // sesekali melihat tampilan Ketua jadi kehilangan notifikasi upload di belakang layar.
+    // Selama perangkat ini masih adminUnlocked, polling tetap jalan (lihat startAdminNotifPolling).
     render();
   }));
   document.querySelectorAll('[data-open-ketua-upload-pin]').forEach(b=> b.addEventListener('click', ()=>{
@@ -3555,6 +3595,15 @@ function compressImage(file){
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// PERBAIKAN NOTIFIKASI: kalau perangkat ini SUDAH PERNAH login Admin sebelumnya
+// (adminUnlocked tersimpan di localStorage), langsung nyalakan polling notifikasi begitu
+// halaman dibuka -- TANPA harus klik tombol "Admin" & masukkan PIN lagi dulu. Ini yang
+// membuat notifikasi akhirnya bisa jalan di komputer juga (dibiarkan terbuka di tab
+// belakang), bukan cuma di HP yang kebetulan tab-nya jarang di-reload.
+if(state.adminUnlocked){
+  startAdminNotifPolling();
 }
 
 loadClass();

@@ -348,15 +348,18 @@
   .status-opt input:focus-visible + span{outline:2px solid var(--primary-light); outline-offset:1px;}
 
   /* ---------- Hari checkbox "chips" (multi-pilih) ---------- */
-  .hari-group{display:flex; flex-wrap:wrap; gap:4px;}
-  .hari-opt{position:relative;}
+  .hari-group{display:flex; flex-wrap:wrap; gap:8px 8px;}
+  .hari-opt{position:relative; display:inline-flex;}
   .hari-opt input{position:absolute; opacity:0; inset:0; cursor:pointer;}
   .hari-opt span{
-    display:block; padding:5px 8px; border-radius:6px; font-size:11px; font-weight:600; text-align:center;
-    border:1.5px solid var(--line-strong); color:var(--ink-soft); white-space:nowrap;
+    display:block; padding:7px 14px; border-radius:8px; font-size:12.5px; font-weight:600; text-align:center;
+    border:1.5px solid var(--line-strong); color:var(--ink-soft); white-space:nowrap; min-width:58px;
+    transition:background .12s ease, border-color .12s ease, color .12s ease;
   }
-  .hari-opt input:checked + span{background:#E9EFF8; border-color:var(--primary); color:var(--primary);}
+  .hari-opt input:checked + span{background:var(--primary); border-color:var(--primary); color:#fff;}
+  .hari-opt input:hover + span{border-color:var(--primary-light);}
   .hari-opt input:focus-visible + span{outline:2px solid var(--primary-light); outline-offset:1px;}
+  .hari-hint{margin:0 0 8px; font-size:12px; color:var(--ink-soft);}
 
   /* ---------- Modal ---------- */
   .modal-overlay{
@@ -2796,11 +2799,14 @@ function renderMatkul(){
         <p>Daftar mata kuliah yang diabsen untuk kelas ini. Atur "Hari" supaya export Excel tersusun sesuai jadwal mingguan.</p>
       </div>
     </div>
-    <form id="addMatkulForm" class="field-row">
-      <div class="field" style="flex:1;"><label>Nama Mata Kuliah</label><input name="nama" placeholder="Contoh: Menggambar Teknik" required></div>
-      <div class="field" style="max-width:140px;"><label>Jam / Pertemuan</label><input name="jam" type="number" min="1" step="1" placeholder="Contoh: 3" required></div>
-      <div class="field" style="max-width:340px;">
-        <label>Hari (boleh pilih lebih dari 1)</label>
+    <form id="addMatkulForm">
+      <div class="field-row">
+        <div class="field" style="flex:1; min-width:220px;"><label>Nama Mata Kuliah</label><input name="nama" placeholder="Contoh: Menggambar Teknik" required></div>
+        <div class="field" style="max-width:140px;"><label>Jam / Pertemuan</label><input name="jam" type="number" min="1" step="1" placeholder="Contoh: 3" required></div>
+      </div>
+      <div class="field" style="margin-top:14px;">
+        <label>Hari Kuliah</label>
+        <p class="hari-hint">Klik hari tempat mata kuliah ini berlangsung. Boleh pilih lebih dari satu hari (misalnya Senin &amp; Kamis) kalau memang jadwalnya begitu.</p>
         <div class="hari-group">
           ${HARI_LIST.map(h=>`
             <label class="hari-opt">
@@ -2809,11 +2815,13 @@ function renderMatkul(){
             </label>`).join('')}
         </div>
       </div>
-      <button class="btn btn-primary" type="submit">+ Tambah</button>
+      <div style="margin-top:14px;">
+        <button class="btn btn-primary" type="submit">+ Tambah Mata Kuliah</button>
+      </div>
     </form>
     ${state.matkul.length ? `
       <table>
-        <thead><tr><th style="width:36px;">No</th><th>Nama Mata Kuliah</th><th style="width:110px;">Jam/Pertemuan</th><th style="width:260px;">Hari</th><th style="width:70px;">Aksi</th></tr></thead>
+        <thead><tr><th style="width:36px;">No</th><th>Nama Mata Kuliah</th><th style="width:110px;">Jam/Pertemuan</th><th style="width:300px;">Hari</th><th style="width:70px;">Aksi</th></tr></thead>
         <tbody>
           ${state.matkul.map((m,i)=>`
             <tr>
@@ -2828,7 +2836,7 @@ function renderMatkul(){
                       <span>${h}</span>
                     </label>`).join('')}
                 </div>
-                ${!(m.hari&&m.hari.length) ? `<div style="color:var(--ink-soft); font-size:11px; margin-top:4px;">&mdash; Belum diatur &mdash;</div>` : ''}
+                ${!(m.hari&&m.hari.length) ? `<div style="color:var(--ink-soft); font-size:11px; margin-top:6px;">&mdash; Belum diatur &mdash;</div>` : ''}
               </td>
               <td><button class="btn btn-danger-ghost btn-sm" data-del-matkul="${m.id}">Hapus</button></td>
             </tr>`).join('')}

@@ -347,6 +347,17 @@
   .status-opt input:checked + span.A{background:#FAE7E5; border-color:var(--danger); color:var(--danger);}
   .status-opt input:focus-visible + span{outline:2px solid var(--primary-light); outline-offset:1px;}
 
+  /* ---------- Hari checkbox "chips" (multi-pilih) ---------- */
+  .hari-group{display:flex; flex-wrap:wrap; gap:4px;}
+  .hari-opt{position:relative;}
+  .hari-opt input{position:absolute; opacity:0; inset:0; cursor:pointer;}
+  .hari-opt span{
+    display:block; padding:5px 8px; border-radius:6px; font-size:11px; font-weight:600; text-align:center;
+    border:1.5px solid var(--line-strong); color:var(--ink-soft); white-space:nowrap;
+  }
+  .hari-opt input:checked + span{background:#E9EFF8; border-color:var(--primary); color:var(--primary);}
+  .hari-opt input:focus-visible + span{outline:2px solid var(--primary-light); outline-offset:1px;}
+
   /* ---------- Modal ---------- */
   .modal-overlay{
     position:fixed; inset:0; background:rgba(15,35,64,.55); backdrop-filter:blur(1px);
@@ -2195,6 +2206,7 @@ async function loadClass(){
     // kelihatan isinya (tidak blank/loading), sambil data terbaru diambil di background.
     state.students = cached.students || [];
     state.matkul = cached.matkul || [];
+    normalizeMatkulHari();
     state.scans = cached.scans || [];
     state.rekap = cached.rekap || {};
     state.semesterStart = cached.semesterStart || DEFAULT_SEMESTER_START;
@@ -2223,6 +2235,7 @@ async function loadClass(){
   state.students.sort((a,b)=> String(a.nim).localeCompare(String(b.nim), undefined, {numeric:true}));
   if(matkul && matkul.length){
     state.matkul = matkul;
+    normalizeMatkulHari();
     // Migrasi otomatis: kalau kelas ini sudah pernah dibuka sebelumnya (jadi sudah ada data
     // mata kuliah tersimpan), tapi master jadwal (SEED_MATKUL) di kode sudah diperbarui --
     // ada mata kuliah baru / hari baru yang belum ada di data tersimpan -- maka mata kuliah
@@ -2232,9 +2245,10 @@ async function loadClass(){
     if(SEED_MATKUL[base]){
       // Cek duplikat berdasarkan (nama + hari), BUKAN nama saja -- karena nama matkul
       // yang sama boleh muncul di lebih dari satu hari (mis. Praktek CNC di Jumat & Sabtu).
-      const kombinasiSudahAda = new Set(state.matkul.map(m=>m.nama+'|'+m.hari));
-      const tambahan = SEED_MATKUL[base].filter(m=>!kombinasiSudahAda.has(m.nama+'|'+(m.hari||null)))
-        .map(m=>({id:uid(), nama:m.nama, jam:m.jam, hari:m.hari||null}));
+      const normDay = h => Array.isArray(h) ? [...h].sort().join(',') : (h?String(h):'');
+      const kombinasiSudahAda = new Set(state.matkul.map(m=>m.nama+'|'+normDay(m.hari)));
+      const tambahan = SEED_MATKUL[base].filter(m=>!kombinasiSudahAda.has(m.nama+'|'+normDay(m.hari)))
+        .map(m=>({id:uid(), nama:m.nama, jam:m.jam, hari: m.hari ? [m.hari] : []}));
       if(tambahan.length){
         state.matkul = [...state.matkul, ...tambahan];
         await saveMatkul();
@@ -2242,10 +2256,11 @@ async function loadClass(){
     }
   } else if(SEED_MATKUL[base]){
     // first time this class is opened: pre-fill with the official matkul list (with jam/pertemuan + hari perkiraan)
-    state.matkul = SEED_MATKUL[base].map(m=>({id:uid(), nama:m.nama, jam:m.jam, hari:m.hari||null}));
+    state.matkul = SEED_MATKUL[base].map(m=>({id:uid(), nama:m.nama, jam:m.jam, hari: m.hari ? [m.hari] : []}));
     await saveMatkul();
   } else {
     state.matkul = matkul;
+    normalizeMatkulHari();
   }
   state.scans = scans;
   state.rekap = rekap;
@@ -2748,6 +2763,18 @@ function renderMahasiswa(){
 
 /* ---- Mata Kuliah ---- */
 const HARI_LIST = ['Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+// Mengembalikan daftar hari sebuah matkul sebagai array, apa pun bentuk data aslinya --
+// data lama menyimpan 1 hari sebagai string tunggal (mis. 'Senin'), data baru menyimpan
+// array (mis. ['Senin','Rabu']) supaya 1 matkul bisa punya lebih dari 1 hari kuliah.
+function hariArrayOf(mk){
+  if(!mk || !mk.hari) return [];
+  return Array.isArray(mk.hari) ? mk.hari : [mk.hari];
+}
+// Migrasi data matkul lama (hari berupa string tunggal / null) menjadi array in-place,
+// supaya seluruh kode lain bisa selalu mengasumsikan m.hari adalah array.
+function normalizeMatkulHari(){
+  state.matkul.forEach(m=>{ m.hari = hariArrayOf(m); });
+}
 function renderMatkul(){
   return `
   <div class="panel">
@@ -2772,18 +2799,21 @@ function renderMatkul(){
     <form id="addMatkulForm" class="field-row">
       <div class="field" style="flex:1;"><label>Nama Mata Kuliah</label><input name="nama" placeholder="Contoh: Menggambar Teknik" required></div>
       <div class="field" style="max-width:140px;"><label>Jam / Pertemuan</label><input name="jam" type="number" min="1" step="1" placeholder="Contoh: 3" required></div>
-      <div class="field" style="max-width:160px;">
-        <label>Hari</label>
-        <select name="hari">
-          <option value="">&mdash; Pilih hari &mdash;</option>
-          ${HARI_LIST.map(h=>`<option value="${h}">${h}</option>`).join('')}
-        </select>
+      <div class="field" style="max-width:340px;">
+        <label>Hari (boleh pilih lebih dari 1)</label>
+        <div class="hari-group">
+          ${HARI_LIST.map(h=>`
+            <label class="hari-opt">
+              <input type="checkbox" name="hari" value="${h}">
+              <span>${h}</span>
+            </label>`).join('')}
+        </div>
       </div>
       <button class="btn btn-primary" type="submit">+ Tambah</button>
     </form>
     ${state.matkul.length ? `
       <table>
-        <thead><tr><th style="width:36px;">No</th><th>Nama Mata Kuliah</th><th style="width:110px;">Jam/Pertemuan</th><th style="width:150px;">Hari</th><th style="width:70px;">Aksi</th></tr></thead>
+        <thead><tr><th style="width:36px;">No</th><th>Nama Mata Kuliah</th><th style="width:110px;">Jam/Pertemuan</th><th style="width:260px;">Hari</th><th style="width:70px;">Aksi</th></tr></thead>
         <tbody>
           ${state.matkul.map((m,i)=>`
             <tr>
@@ -2791,10 +2821,14 @@ function renderMatkul(){
               <td>${escapeHtml(m.nama)}</td>
               <td class="mono">${m.jam||1} jam</td>
               <td>
-                <select data-set-hari="${m.id}">
-                  <option value="" ${!m.hari?'selected':''}>&mdash; Belum diatur &mdash;</option>
-                  ${HARI_LIST.map(h=>`<option value="${h}" ${m.hari===h?'selected':''}>${h}</option>`).join('')}
-                </select>
+                <div class="hari-group">
+                  ${HARI_LIST.map(h=>`
+                    <label class="hari-opt">
+                      <input type="checkbox" data-toggle-hari="${m.id}" value="${h}" ${(m.hari||[]).includes(h)?'checked':''}>
+                      <span>${h}</span>
+                    </label>`).join('')}
+                </div>
+                ${!(m.hari&&m.hari.length) ? `<div style="color:var(--ink-soft); font-size:11px; margin-top:4px;">&mdash; Belum diatur &mdash;</div>` : ''}
               </td>
               <td><button class="btn btn-danger-ghost btn-sm" data-del-matkul="${m.id}">Hapus</button></td>
             </tr>`).join('')}
@@ -2922,17 +2956,26 @@ function renderRekap(){
 function hitungRekapMatkul(matkulId){
   const mk = state.matkul.find(m=>m.id===matkulId);
   const jamPerPertemuan = mk ? (mk.jam||1) : 1;
-  const scansM = state.scans.filter(s=>s.matkulId===matkulId && s.direkap);
+  // Semua scan untuk matkul ini dihitung -- termasuk yang BELUM direkap admin --
+  // supaya sesi yang belum diproses tetap tampil sebagai pertemuan (default Alpa).
+  const scansM = state.scans.filter(s=>s.matkulId===matkulId);
   const totalPertemuan = scansM.length;
   const perStudent = {};
   state.students.forEach(st=>{
     let S=0,I=0,A=0;
     scansM.forEach(sc=>{
+      if(!sc.direkap){
+        // Admin belum mengisi rekap utk sesi ini -> semua mahasiswa dianggap Alpa
+        // dulu sampai admin benar-benar input absensinya.
+        A++;
+        return;
+      }
       const r = state.rekap[sc.id];
       const status = r ? r[st.id] : null;
       if(status==='S') S++;
       else if(status==='I') I++;
       else if(status==='A') A++;
+      else if(!status) A++; // sudah direkap tapi status mahasiswa ini belum ditandai -> anggap Alpa juga
     });
     perStudent[st.id] = {
       S, I, A, jumlahPertemuan: S+I+A,
@@ -3012,7 +3055,7 @@ function renderSummaryMatrix(){
         <tbody>${totalRows}</tbody>
       </table>
     </div>
-    <p class="note">Total jam seluruh mata kuliah (${state.matkul.length} matkul) yang sudah direkap: <strong>${totalJamSemuaMatkul}</strong> jam.</p>
+    <p class="note">Total jam seluruh mata kuliah (${state.matkul.length} matkul): <strong>${totalJamSemuaMatkul}</strong> jam. Sesi yang scan-nya belum diupload atau belum direkap admin otomatis dihitung <strong>Alpa</strong> untuk semua mahasiswa sampai admin mengisi rekap kehadiran sebenarnya.</p>
   </div>
 
   <div class="panel">
@@ -3020,8 +3063,8 @@ function renderSummaryMatrix(){
       <div><h2>Export ke Excel &mdash; Format Resmi Mingguan</h2><p>Menghasilkan file .xlsx per minggu (Minggu-1, Minggu-2, dst) sesuai format rekapitulasi absensi jurusan, dengan angka kumulatif sejak awal semester.</p></div>
     </div>
     ${!state.semesterStart ? `<div class="note">Atur <strong>Tanggal Mulai Semester</strong> dulu di tab "Mata Kuliah" sebelum export.</div>` : ''}
-    ${!state.matkul.some(m=>m.hari) ? `<div class="note">Atur <strong>Hari</strong> untuk mata kuliah di tab "Mata Kuliah" dulu, supaya kolom mingguan tersusun benar.</div>` : ''}
-    <button class="btn btn-accent" id="exportExcelBtn" ${(!state.semesterStart || !state.matkul.some(m=>m.hari) || !state.students.length) ? 'disabled' : ''}>&#8595; Export ke Excel</button>
+    ${!state.matkul.some(m=>hariArrayOf(m).length) ? `<div class="note">Atur <strong>Hari</strong> untuk mata kuliah di tab "Mata Kuliah" dulu, supaya kolom mingguan tersusun benar.</div>` : ''}
+    <button class="btn btn-accent" id="exportExcelBtn" ${(!state.semesterStart || !state.matkul.some(m=>hariArrayOf(m).length) || !state.students.length) ? 'disabled' : ''}>&#8595; Export ke Excel</button>
   </div>`;
 }
 
@@ -3042,8 +3085,8 @@ function renderWeeklyRecap(){
   const prevSaturday = addDaysDate(monday, -2);
 
   const matkulByHari = {};
-  DAYS_ID.forEach(d=> matkulByHari[d] = state.matkul.filter(m=>m.hari===d));
-  const adaJadwal = state.matkul.some(m=>m.hari);
+  DAYS_ID.forEach(d=> matkulByHari[d] = state.matkul.filter(m=>hariArrayOf(m).includes(d)));
+  const adaJadwal = state.matkul.some(m=>hariArrayOf(m).length);
 
   const weekOptions = Array.from({length:TOTAL_WEEKS}, (_,i)=>i+1).map(w=>{
     const mon = weekMondayOf(w, state.semesterStart);
@@ -3440,7 +3483,7 @@ function attachHandlers(){
     const fd = new FormData(addMatkulForm);
     const nama = fd.get('nama').trim();
     const jam = parseFloat(fd.get('jam'));
-    const hari = fd.get('hari') || null;
+    const hari = fd.getAll('hari'); // bisa lebih dari satu hari dicentang
     if(!nama || !jam || jam<=0) return;
     state.matkul.push({id:uid(), nama, jam, hari});
     render();
@@ -3452,9 +3495,17 @@ function attachHandlers(){
     render();
     saveMatkul();
   }));
-  document.querySelectorAll('[data-set-hari]').forEach(sel=> sel.addEventListener('change', ()=>{
-    const mk = state.matkul.find(m=>m.id===sel.dataset.setHari);
-    if(mk){ mk.hari = sel.value || null; saveMatkul(); }
+  document.querySelectorAll('[data-toggle-hari]').forEach(chk=> chk.addEventListener('change', ()=>{
+    const mk = state.matkul.find(m=>m.id===chk.dataset.toggleHari);
+    if(!mk) return;
+    if(!Array.isArray(mk.hari)) mk.hari = mk.hari ? [mk.hari] : [];
+    const day = chk.value;
+    if(chk.checked){
+      if(!mk.hari.includes(day)) mk.hari.push(day);
+    } else {
+      mk.hari = mk.hari.filter(h=>h!==day);
+    }
+    saveMatkul();
   }));
   const semesterStartInput = document.getElementById('semesterStartInput');
   if(semesterStartInput) semesterStartInput.addEventListener('change', ()=>{
@@ -3552,20 +3603,29 @@ function weekMondayOf(weekNum, semesterStartStr){
   return addDaysDate(start, (weekNum-1)*7);
 }
 
-// Total S/I/A dalam JAM untuk 1 matkul + 1 mahasiswa, akumulasi dari semua scan yang direkap
-// dengan tanggal <= uptoDate (inklusif)
+// Total S/I/A dalam JAM untuk 1 matkul + 1 mahasiswa, akumulasi dari semua scan
+// dengan tanggal <= uptoDate (inklusif). Sesi yang BELUM direkap admin (termasuk yang
+// belum diupload sama sekali sehingga belum bisa direkap) dihitung sebagai Alpa (A)
+// dulu untuk SEMUA mahasiswa -- begitu admin mengisi rekap dan mahasiswa tsb ternyata
+// Hadir/Izin/Sakit, tanda Alpa-nya otomatis hilang dan berganti sesuai status yang diinput.
 function cumulativeSIA(uptoDate, matkulId, studentId){
   let S=0,I=0,A=0;
   const mk = state.matkul.find(m=>m.id===matkulId);
   const jam = mk ? (mk.jam||1) : 1;
   state.scans.forEach(sc=>{
-    if(sc.matkulId!==matkulId || !sc.direkap) return;
+    if(sc.matkulId!==matkulId) return;
     if(parseISODate(sc.tanggal) > uptoDate) return;
+    if(!sc.direkap){
+      // Belum direkap admin -> default Alpa dulu.
+      A += jam;
+      return;
+    }
     const r = state.rekap[sc.id];
     const status = r ? r[studentId] : null;
     if(status==='S') S+=jam;
     else if(status==='I') I+=jam;
     else if(status==='A') A+=jam;
+    else if(!status) A+=jam; // sudah direkap tapi status mahasiswa ini belum ditandai -> anggap Alpa juga
   });
   return {S,I,A};
 }
@@ -3612,7 +3672,7 @@ function exportWeeklyExcelOne_(){
 // exportWeeklyExcelOne_ (1 minggu saja, sesuai yang sedang dipilih di layar).
 function buildRekapMingguanBlocks_(weekNumbers){
   const matkulByHari = {};
-  DAYS_ID.forEach(d=> matkulByHari[d] = state.matkul.filter(m=>m.hari===d));
+  DAYS_ID.forEach(d=> matkulByHari[d] = state.matkul.filter(m=>hariArrayOf(m).includes(d)));
 
   const colNO=1, colBP=2, colNAMA=3, colS=4, colI=5, colA=6, colJUMLAH=7, colPKTOS=8, colKOMP=9, colStart=10;
   const data = [];

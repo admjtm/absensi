@@ -2999,13 +2999,13 @@ function renderMatkul(){
     </form>
     ${state.matkul.length ? `
       <div style="overflow-x:auto;">
-      <table style="width:auto; min-width:100%;">
-        <thead><tr><th style="width:32px;">No</th><th style="width:210px;">Nama Mata Kuliah</th><th style="width:90px;">Jam/Pertemuan</th><th style="min-width:520px;">Hari</th><th style="width:64px;">Aksi</th></tr></thead>
+      <table style="width:100%;">
+        <thead><tr><th style="width:32px;">No</th><th style="white-space:nowrap;">Nama Mata Kuliah</th><th style="width:90px;">Jam/Pertemuan</th><th style="min-width:520px;">Hari</th><th style="width:64px;">Aksi</th></tr></thead>
         <tbody>
           ${state.matkul.map((m,i)=>`
             <tr>
               <td class="mono">${i+1}</td>
-              <td>${escapeHtml(m.nama)}</td>
+              <td style="white-space:nowrap;">${escapeHtml(m.nama)}</td>
               <td class="mono">${m.jam||1} jam</td>
               <td>
                 <div class="hari-group" style="flex-wrap:nowrap;">

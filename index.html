@@ -3304,16 +3304,15 @@ function renderWeeklyRecap(){
 
   const rows = state.students.map((st,i)=>{
     let dayCells = '';
-    DAYS_ID.forEach(day=>{
+    DAYS_ID.forEach((day,dIdx)=>{
       const list = matkulByHari[day];
       if(!list.length){
         dayCells += `<td class="mono" style="color:var(--ink-soft);">&mdash;</td>`;
         return;
       }
+      const dateForDay = toISO(addDaysDate(monday, dIdx));
       list.forEach(mk=>{
-        const cumNow = cumulativeSIA(saturday, mk.id, st.id);
-        const cumPrev = week>1 ? cumulativeSIA(prevSaturday, mk.id, st.id) : {S:0,I:0,A:0};
-        const wS=cumNow.S-cumPrev.S, wI=cumNow.I-cumPrev.I, wA=cumNow.A-cumPrev.A;
+        const { S:wS, I:wI, A:wA } = sessionStatusForDate(mk, dateForDay, st.id);
         dayCells += `<td class="mono sia-cell">${wS||''}</td><td class="mono sia-cell">${wI||''}</td><td class="mono sia-cell">${wA||''}</td>`;
       });
     });
@@ -3834,6 +3833,32 @@ function weekMondayOf(weekNum, semesterStartStr){
 // belum direkap admin, dihitung sebagai Alpa (A) dulu untuk SEMUA mahasiswa -- begitu
 // discan lalu admin mengisi rekap dan mahasiswa tsb ternyata Hadir/Izin/Sakit, tanda
 // Alpa-nya otomatis hilang dan berganti sesuai status yang diinput.
+// Status S/I/A untuk 1 matkul + 1 mahasiswa pada SATU tanggal spesifik saja (bukan
+// akumulasi 1 minggu). Dipakai di tabel Rekap Mingguan supaya matkul yang jadwalnya
+// lebih dari 1 hari per minggu (mis. Senin & Selasa) tidak menampilkan angka total
+// mingguan yang sama di kedua kolom hari -- tiap kolom hari sekarang murni menunjukkan
+// status pada tanggal kolom itu saja. Tanggal yang belum terjadi (masih di masa depan)
+// selalu dianggap kosong (belum ada sesi), bukan Alpa.
+function sessionStatusForDate(mk, dateStr, studentId){
+  const jam = mk.jam||1;
+  const d = parseISODate(dateStr);
+  const dn = dayNameOfDate(d);
+  const terjadwalHariItu = dn && hariArrayOf(mk).includes(dn);
+  const sc = state.scans.find(s=>s.matkulId===mk.id && s.tanggal===dateStr);
+  const sudahLewat = d <= todayDateCap();
+  if(!terjadwalHariItu && !sc) return {S:0,I:0,A:0}; // tidak ada sesi sama sekali tanggal ini
+  if(!sudahLewat && !sc) return {S:0,I:0,A:0}; // tanggal belum terjadi & belum ada scan -> kosong, bukan Alpa
+  if(!sc || !sc.direkap){
+    // Sesi seharusnya sudah terjadi tapi belum ada scan, atau sudah discan tapi admin
+    // belum isi rekap -> default Alpa (hanya kalau tanggalnya sudah lewat/hari ini).
+    return sudahLewat ? {S:0,I:0,A:jam} : {S:0,I:0,A:0};
+  }
+  const r = state.rekap[sc.id];
+  const status = r ? r[studentId] : null;
+  if(status==='S') return {S:jam,I:0,A:0};
+  if(status==='I') return {S:0,I:jam,A:0};
+  return {S:0,I:0,A:jam}; // status 'A' atau belum ditandai admin -> Alpa
+}
 function cumulativeSIA(uptoDate, matkulId, studentId){
   let S=0,I=0,A=0;
   const mk = state.matkul.find(m=>m.id===matkulId);
@@ -3954,11 +3979,10 @@ function buildRekapMingguanBlocks_(weekNumbers){
       setCell(r,colBP,st.nim);
       setCell(r,colNAMA,st.nama);
       let c2 = colStart;
-      DAYS_ID.forEach(day=>{
+      DAYS_ID.forEach((day,dIdx)=>{
+        const dateForDay = toISO(addDaysDate(monday, dIdx));
         matkulByHari[day].forEach(mk=>{
-          const cumNow = cumulativeSIA(saturday, mk.id, st.id);
-          const cumPrev = week>1 ? cumulativeSIA(prevSaturday, mk.id, st.id) : {S:0,I:0,A:0};
-          const wS=cumNow.S-cumPrev.S, wI=cumNow.I-cumPrev.I, wA=cumNow.A-cumPrev.A;
+          const { S:wS, I:wI, A:wA } = sessionStatusForDate(mk, dateForDay, st.id);
           if(wS) setCell(r,c2,wS);
           if(wI) setCell(r,c2+1,wI);
           if(wA) setCell(r,c2+2,wA);

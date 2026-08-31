@@ -271,7 +271,7 @@
     overflow:auto; max-height:78vh; border:1px solid var(--line-strong); border-radius:8px;
     background:#f3f3f3; touch-action:pinch-zoom;
   }
-  .img-zoom-target{ display:block; cursor:zoom-in; }
+  .img-zoom-target{ display:block; cursor:zoom-in; border-radius:6px; }
   .excel-table--fit thead th{ padding:4px 3px; font-size:10px; text-align:center; vertical-align:middle; white-space:normal; word-break:break-word; }
   .excel-table--fit tbody td{ white-space:nowrap; }
   .excel-table--fit td.nim, .excel-table--fit td.mono{ font-size:10.5px; }
@@ -3447,14 +3447,14 @@ function renderZoomableImage(dataUrl, alt, uid){
       <span class="note" style="margin:0 0 0 4px;">Cubit (pinch) atau klik dobel foto untuk zoom</span>
     </div>
     <div class="img-zoom-viewport" id="imgZoomViewport_${uid}">
-      <img class="full img-zoom-target" id="imgZoomTarget_${uid}" src="${dataUrl}" alt="${escapeHtml(alt)}" style="zoom:${z};">
+      <img class="img-zoom-target" id="imgZoomTarget_${uid}" src="${dataUrl}" alt="${escapeHtml(alt)}" style="width:${Math.round(z*100)}%; max-width:none;">
     </div>`;
 }
 function applyImgZoom(uid){
   const z = imgZoomLevels[uid] || 1;
   const img = document.getElementById('imgZoomTarget_'+uid);
   const label = document.getElementById('imgZoomLabel_'+uid);
-  if(img) img.style.zoom = z;
+  if(img) img.style.width = Math.round(z*100)+'%';
   if(label) label.textContent = Math.round(z*100)+'%';
 }
 function attachImgZoomHandlers(root, uid){

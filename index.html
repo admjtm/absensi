@@ -2325,6 +2325,7 @@ let state = {
   modal: null, // { type:'image', url } | { type:'rekap', scan }
   summaryMatkulId: null,
   summaryWeek: 1,
+  rekapZoom: 1, // level zoom tabel "Rekap Absensi per Minggu" (1 = 100%, di-reset tiap reload halaman)
   semesterStart: null, // 'YYYY-MM-DD', tanggal Senin minggu pertama semester (per kelas)
   notifications: [], // riwayat notifikasi upload untuk Admin: {id, prodi, kelas, matkul, tanggalKuliah, timestamp, read}
   notifPanelOpen: false,
@@ -2398,6 +2399,29 @@ async function loadClass(){
     // karena sistem menganggapnya "belum ada" dan menambahkannya lagi secara otomatis.
     // Sekarang data mata kuliah tersimpan (state.matkul) dipakai apa adanya -- kalau admin
     // menghapus satu mata kuliah, mata kuliah itu akan tetap terhapus permanen.
+    //
+    // LAPIS PENGAMAN TAMBAHAN: apapun penyebabnya (deploy lama yang masih aktif, submit
+    // form dobel, dsb), setiap kali kelas ini dibuka sistem sekarang otomatis mendeteksi
+    // & menggabungkan mata kuliah yang namanya PERSIS SAMA jadi 1 entri saja -- hari
+    // kuliahnya digabung (union), lalu entri duplikatnya dibuang permanen dan disimpan ulang.
+    // Jadi walau ada duplikat baru muncul dari sumber mana pun, begitu kelas dibuka lagi
+    // otomatis dirapikan sendiri tanpa perlu hapus manual satu-satu.
+    const dedupMap = new Map();
+    state.matkul.forEach(m=>{
+      const key = m.nama.trim();
+      if(!dedupMap.has(key)){
+        dedupMap.set(key, {...m, hari:[...(m.hari||[])]});
+      } else {
+        const existing = dedupMap.get(key);
+        (m.hari||[]).forEach(h=>{ if(!existing.hari.includes(h)) existing.hari.push(h); });
+        if(!existing.jam && m.jam) existing.jam = m.jam;
+      }
+    });
+    const deduped = Array.from(dedupMap.values());
+    if(deduped.length !== state.matkul.length){
+      state.matkul = deduped;
+      await saveMatkul();
+    }
   } else if(SEED_MATKUL[base]){
     // first time this class is opened: pre-fill with the official matkul list (with jam/pertemuan + hari perkiraan)
     state.matkul = SEED_MATKUL[base].map(m=>({id:uid(), nama:m.nama, jam:m.jam, hari: m.hari ? [m.hari] : []}));
@@ -3353,10 +3377,17 @@ function renderWeeklyRecap(){
       <select id="summaryWeekSelect">${weekOptions}</select>
     </div>
     ${!adaJadwal ? `<div class="note">Belum ada mata kuliah yang diatur "Hari"-nya di tab "Mata Kuliah" &mdash; kolom per mata kuliah belum bisa ditampilkan.</div>` : ''}
-    <div style="margin-bottom:14px;">
+    <div style="margin-bottom:14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
       <button class="btn btn-ghost btn-sm" id="exportWeekExcelBtn" ${!state.students.length ? 'disabled' : ''}>&#8595; Download Excel (Minggu ${week} ini)</button>
+      <div style="display:flex; align-items:center; gap:4px; border:1px solid var(--line-strong); border-radius:8px; padding:2px;">
+        <button class="btn btn-ghost btn-sm" id="rekapZoomOut" title="Perkecil tampilan tabel" style="padding:4px 10px;">&minus;</button>
+        <span class="mono" id="rekapZoomLabel" style="font-size:12px; min-width:42px; text-align:center;">${Math.round((state.rekapZoom||1)*100)}%</span>
+        <button class="btn btn-ghost btn-sm" id="rekapZoomIn" title="Perbesar tampilan tabel" style="padding:4px 10px;">&plus;</button>
+        <button class="btn btn-ghost btn-sm" id="rekapZoomReset" title="Kembalikan ke ukuran normal" style="padding:4px 10px; font-size:11px;">Reset</button>
+      </div>
     </div>
     <div class="excel-table-scroll">
+      <div id="rekapZoomWrap" style="zoom:${state.rekapZoom||1};">
       <table class="excel-table excel-table--fit">
         <colgroup>${colgroupHtml}</colgroup>
         <thead>
@@ -3381,6 +3412,7 @@ function renderWeeklyRecap(){
         </thead>
         <tbody>${rows}</tbody>
       </table>
+      </div>
     </div>
   </div>`;
 }
@@ -3646,11 +3678,15 @@ function attachHandlers(){
   const addMatkulForm = document.getElementById('addMatkulForm');
   if(addMatkulForm) addMatkulForm.addEventListener('submit', (e)=>{
     e.preventDefault();
+    const submitBtn = addMatkulForm.querySelector('button[type="submit"]');
+    if(submitBtn && submitBtn.disabled) return; // cegah submit dobel kalau tombol di-tap 2x cepat
     const fd = new FormData(addMatkulForm);
     const nama = fd.get('nama').trim();
     const jam = parseFloat(fd.get('jam'));
     const hari = fd.getAll('hari'); // bisa lebih dari satu hari dicentang
     if(!nama || !jam || jam<=0) return;
+    if(state.matkul.some(m=>m.nama.trim()===nama)){ alert('Mata kuliah dengan nama ini sudah ada di daftar.'); return; }
+    if(submitBtn) submitBtn.disabled = true;
     state.matkul.push({id:uid(), nama, jam, hari});
     render();
     saveMatkul();
@@ -3740,6 +3776,30 @@ function attachHandlers(){
   if(exportExcelBtn) exportExcelBtn.addEventListener('click', exportOfficialExcel);
   const exportWeekExcelBtn = document.getElementById('exportWeekExcelBtn');
   if(exportWeekExcelBtn) exportWeekExcelBtn.addEventListener('click', exportWeeklyExcelOne_);
+  // Kontrol zoom tabel Rekap Mingguan: perbesar/perkecil tampilan (min 60%, max 200%),
+  // supaya angka S/I/A yang kecil-kecil bisa dibaca lebih jelas saat perlu, tanpa mengubah
+  // ukuran default tabel (yang sengaja dibuat kompak supaya muat 1 layar).
+  const applyRekapZoom = ()=>{
+    const wrap = document.getElementById('rekapZoomWrap');
+    const label = document.getElementById('rekapZoomLabel');
+    if(wrap) wrap.style.zoom = state.rekapZoom;
+    if(label) label.textContent = Math.round(state.rekapZoom*100)+'%';
+  };
+  const rekapZoomOut = document.getElementById('rekapZoomOut');
+  if(rekapZoomOut) rekapZoomOut.addEventListener('click', ()=>{
+    state.rekapZoom = Math.max(0.6, Math.round(((state.rekapZoom||1)-0.1)*10)/10);
+    applyRekapZoom();
+  });
+  const rekapZoomIn = document.getElementById('rekapZoomIn');
+  if(rekapZoomIn) rekapZoomIn.addEventListener('click', ()=>{
+    state.rekapZoom = Math.min(2, Math.round(((state.rekapZoom||1)+0.1)*10)/10);
+    applyRekapZoom();
+  });
+  const rekapZoomReset = document.getElementById('rekapZoomReset');
+  if(rekapZoomReset) rekapZoomReset.addEventListener('click', ()=>{
+    state.rekapZoom = 1;
+    applyRekapZoom();
+  });
   const exportTotalExcelBtn = document.getElementById('exportTotalExcelBtn');
   if(exportTotalExcelBtn) exportTotalExcelBtn.addEventListener('click', exportTotalRecapExcel);
 }

@@ -2047,8 +2047,7 @@ const SEED_STUDENTS = {
 };
 
 // Mata kuliah semester 1 (kelas 1) D4 Rekayasa Perancangan Mekanik, berlaku sama untuk kelas 1A-1F
-// Diurut dari kode matkul terkecil ke terbesar. "Praktek Teknologi Mekanik 1" (RPM4207) diberikan
-// dua kali sesuai data yang diberikan -- dianggap 2 sesi praktek di hari berbeda.
+// Diurut dari kode matkul terkecil ke terbesar.
 const MATKUL_SMT1_D4RPM = [
   { nama:'RPM4101 Pendidikan Karakter', jam:2, hari:'Senin' },
   { nama:'RPM4102 Bahasa Inggris 1', jam:2, hari:'Senin' },
@@ -2059,7 +2058,6 @@ const MATKUL_SMT1_D4RPM = [
   { nama:'RPM4205 Gambar Teknik', jam:4, hari:'Kamis' },
   { nama:'RPM4206 Material Teknik', jam:2, hari:'Kamis' },
   { nama:'RPM4207 Praktek Teknologi Mekanik 1', jam:5, hari:'Jumat' },
-  { nama:'RPM4207 Praktek Teknologi Mekanik 1', jam:5, hari:'Sabtu' },
 ];
 // Mata kuliah semester 3 (kelas 2) D4 Rekayasa Perancangan Mekanik, berlaku sama untuk kelas 2A-2F
 // Diurut dari kode matkul terkecil ke terbesar.
@@ -2175,9 +2173,9 @@ const MATKUL_SMT1_D3TM = [
   { nama:'TME3103 Matematika Terapan I', jam:2, hari:'Selasa' },
   { nama:'TME3104 Fisika Terapan', jam:2, hari:'Selasa' },
   { nama:'TME3105 Kimia Terapan', jam:2, hari:'Rabu' },
-  { nama:'TME3204 K3 dan standar internasional', jam:2, hari:'Rabu' },
+  { nama:'TME3204 K3 dan Standar Internasional', jam:2, hari:'Rabu' },
   { nama:'TME3301 Gambar Teknik', jam:4, hari:'Kamis' },
-  { nama:'TME3302 Teknologi Mekanik 1', jam:2, hari:'Kamis' },
+  { nama:'TME3302 Teknologi Mekanik', jam:2, hari:'Kamis' },
   { nama:'TME3303 Praktek Teknologi Mekanik I', jam:5, hari:'Jumat' },
   { nama:'TME3304 Praktek Kerja Mesin Perkakas I', jam:5, hari:'Sabtu' },
 ];
@@ -2195,23 +2193,21 @@ const MATKUL_SMT3_D3TM = [
   { nama:'TME3321 Teknik Produksi', jam:5, hari:'Kamis' },
   { nama:'TME3322 Praktek CNC', jam:5, hari:'Jumat' },
   { nama:'TME3323 Praktek Produksi 1', jam:5, hari:'Jumat' },
-  { nama:'TME3322 Praktek CNC', jam:5, hari:'Sabtu' },
-  { nama:'TME3323 Praktek Produksi 1', jam:5, hari:'Sabtu' },
 ];
 // Mata kuliah semester 5 D3 Teknik Mesin, berlaku sama untuk kelas 3A-3F
 // (nama, jam per pertemuan sesuai jam/minggu pada tabel akademik)
 // "hari" default disebar Senin-Sabtu sebagai perkiraan awal -- admin bisa ubah di tab "Mata Kuliah"
 const MATKUL_SMT5_D3TM = [
   { nama:'TME3106 Bahasa Inggris Teknik Profesional', jam:2, hari:'Senin' },
-  { nama:'TME3206 Statistik dan kontrol kualitas', jam:2, hari:'Senin' },
-  { nama:'TME3207 Kewirausahaan dan Manajemen proyek', jam:2, hari:'Selasa' },
-  { nama:'TME3335 Pneumatik & Hidrolik 2', jam:1, hari:'Selasa' },
-  { nama:'TME3336 Praktikum Pneumatik & Hidrolik 2', jam:3, hari:'Rabu' },
+  { nama:'TME3206 Statistik dan Kontrol Kualitas', jam:2, hari:'Senin' },
+  { nama:'TME3207 Kewirausahaan dan Manajemen Proyek', jam:2, hari:'Selasa' },
+  { nama:'TME3335 Pneumatik dan Hidrolik 2', jam:1, hari:'Selasa' },
+  { nama:'TME3336 Praktikum Pneumatik dan Hidrolik 2', jam:3, hari:'Rabu' },
   { nama:'TME3337 Plastik Moulding, Press Tool, Jig & Fixture', jam:2, hari:'Kamis' },
-  { nama:'TME3338 Teknik Refrigerasi & Pengkondisian Udara', jam:2, hari:'Kamis' },
-  { nama:'TME3339 Manajemen Produksi dan Perawatan', jam:2, hari:'Jumat' },
+  { nama:'TME3338 Teknik Refrigerasi dan Pengkondisian Udara', jam:2, hari:'Kamis' },
+  { nama:'TME3339 Managemen Produksi dan Perawatan', jam:2, hari:'Jumat' },
   { nama:'TME3340 Perancangan Mesin', jam:2, hari:'Jumat' },
-  { nama:'TME3341 Praktek Perawatan & Perbaikan Mesin Industri 2', jam:5, hari:'Sabtu' },
+  { nama:'TME3341 Praktek Perawatan dan Perbaikan Industri 2', jam:5, hari:'Sabtu' },
 ];
 const SEED_MATKUL = {
   'd4rpm:1A': MATKUL_SMT1_D4RPM,

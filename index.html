@@ -268,7 +268,7 @@
   .img-zoom-controls{ display:flex; align-items:center; gap:4px; margin-bottom:8px; }
   .img-zoom-controls .zoom-label{ font-size:12px; min-width:42px; text-align:center; }
   .img-zoom-viewport{
-    overflow:auto; max-height:65vh; border:1px solid var(--line-strong); border-radius:8px;
+    overflow:auto; max-height:78vh; border:1px solid var(--line-strong); border-radius:8px;
     background:#f3f3f3; touch-action:pinch-zoom;
   }
   .img-zoom-target{ display:block; cursor:zoom-in; }
@@ -379,6 +379,10 @@
     background:#fff; border-radius:12px; max-width:760px; width:100%; max-height:88vh; overflow:auto;
     box-shadow:0 20px 60px rgba(0,0,0,.3);
   }
+  /* Modal khusus untuk menampilkan foto scan (Lihat Scan & Isi Rekap) dibuat lebih lebar
+     dari modal biasa, supaya foto lembar absensi kelihatan besar & jelas begitu dibuka --
+     tidak perlu langsung pencet tombol zoom dulu. */
+  .modal.modal-wide{ max-width:1100px; }
   .modal-head{display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line); position:sticky; top:0; background:#fff;}
   .modal-head h3{margin:0; font-size:15px;}
   .modal-close{border:none; background:var(--paper); width:28px; height:28px; border-radius:50%; font-size:15px; color:var(--ink-soft);}
@@ -3481,7 +3485,7 @@ function renderModal(){
     if(!sc){ state.modal=null; return; }
     root.innerHTML = `
       <div class="modal-overlay" data-close-modal="1">
-        <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal modal-wide" onclick="event.stopPropagation()">
           <div class="modal-head"><h3>${escapeHtml(sc.matkulNama)} &middot; ${formatDate(sc.tanggal)}</h3><button class="modal-close" data-close-modal="1">&times;</button></div>
           <div class="modal-body"><div id="imgZoomWrap_view_${sc.id}">${renderZoomableImage(sc.dataUrl, 'Scan absensi', 'view_'+sc.id)}</div></div>
         </div>
@@ -3593,7 +3597,7 @@ function renderModal(){
 
     root.innerHTML = `
       <div class="modal-overlay" data-close-modal="1">
-        <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal modal-wide" onclick="event.stopPropagation()">
           <div class="modal-head">
             <h3>Isi Rekap &mdash; ${escapeHtml(sc.matkulNama)} &middot; ${formatDate(sc.tanggal)}</h3>
             <button class="modal-close" data-close-modal="1">&times;</button>

@@ -3286,9 +3286,9 @@ function renderWeeklyRecap(){
 
   // Colgroup: setiap kolom S/I/A (total maupun per mata kuliah) diberi bobot lebar yang SAMA,
   // supaya semua kolom simetris dan tabel selalu pas dalam 1 layar tanpa perlu digeser ke samping.
-  const W = { no:30, bp:70, nama:120, jam:42, pktos:34, komp:50, ket:58, sia:24, kosong:46 };
+  const W = { no:30, bp:70, nama:120, jam:42, pktos:34, komp:50, ket:58, sia:24, siaSum:34, kosong:46 };
   let colgroupHtml = `<col style="width:${W.no}px;"><col style="width:${W.bp}px;"><col style="width:${W.nama}px;">`;
-  colgroupHtml += `<col style="width:${W.sia}px;"><col style="width:${W.sia}px;"><col style="width:${W.sia}px;">`;
+  colgroupHtml += `<col style="width:${W.siaSum}px;"><col style="width:${W.siaSum}px;"><col style="width:${W.siaSum}px;">`;
   colgroupHtml += `<col style="width:${W.jam}px;"><col style="width:${W.pktos}px;"><col style="width:${W.komp}px;">`;
   DAYS_ID.forEach(day=>{
     const list = matkulByHari[day];

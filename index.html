@@ -2998,8 +2998,9 @@ function renderMatkul(){
       </div>
     </form>
     ${state.matkul.length ? `
-      <table>
-        <thead><tr><th style="width:36px;">No</th><th>Nama Mata Kuliah</th><th style="width:110px;">Jam/Pertemuan</th><th style="width:300px;">Hari</th><th style="width:70px;">Aksi</th></tr></thead>
+      <div style="overflow-x:auto;">
+      <table style="width:auto; min-width:100%;">
+        <thead><tr><th style="width:32px;">No</th><th style="width:210px;">Nama Mata Kuliah</th><th style="width:90px;">Jam/Pertemuan</th><th style="min-width:520px;">Hari</th><th style="width:64px;">Aksi</th></tr></thead>
         <tbody>
           ${state.matkul.map((m,i)=>`
             <tr>
@@ -3007,7 +3008,7 @@ function renderMatkul(){
               <td>${escapeHtml(m.nama)}</td>
               <td class="mono">${m.jam||1} jam</td>
               <td>
-                <div class="hari-group">
+                <div class="hari-group" style="flex-wrap:nowrap;">
                   ${HARI_LIST.map(h=>`
                     <label class="hari-opt">
                       <input type="checkbox" data-toggle-hari="${m.id}" value="${h}" ${(m.hari||[]).includes(h)?'checked':''}>
@@ -3019,7 +3020,8 @@ function renderMatkul(){
               <td><button class="btn btn-danger-ghost btn-sm" data-del-matkul="${m.id}">Hapus</button></td>
             </tr>`).join('')}
         </tbody>
-      </table>` : `
+      </table>
+      </div>` : `
       <div class="empty-state">
         <div class="glyph">&#128218;</div>
         <h3>Belum ada mata kuliah</h3>

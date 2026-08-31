@@ -2392,24 +2392,12 @@ async function loadClass(){
   if(matkul && matkul.length){
     state.matkul = matkul;
     normalizeMatkulHari();
-    // Migrasi otomatis: kalau kelas ini sudah pernah dibuka sebelumnya (jadi sudah ada data
-    // mata kuliah tersimpan), tapi master jadwal (SEED_MATKUL) di kode sudah diperbarui --
-    // ada mata kuliah baru / hari baru yang belum ada di data tersimpan -- maka mata kuliah
-    // yang belum ada itu ditambahkan otomatis. Ini berlaku untuk SEMUA hari, bukan cuma Sabtu,
-    // supaya perubahan apa pun di SEED_MATKUL langsung ikut muncul tanpa perlu hapus data manual.
-    // Mata kuliah yang sudah ada (beserta data absensinya) TIDAK disentuh/dihapus.
-    if(SEED_MATKUL[base]){
-      // Cek duplikat berdasarkan (nama + hari), BUKAN nama saja -- karena nama matkul
-      // yang sama boleh muncul di lebih dari satu hari (mis. Praktek CNC di Jumat & Sabtu).
-      const normDay = h => Array.isArray(h) ? [...h].sort().join(',') : (h?String(h):'');
-      const kombinasiSudahAda = new Set(state.matkul.map(m=>m.nama+'|'+normDay(m.hari)));
-      const tambahan = SEED_MATKUL[base].filter(m=>!kombinasiSudahAda.has(m.nama+'|'+normDay(m.hari)))
-        .map(m=>({id:uid(), nama:m.nama, jam:m.jam, hari: m.hari ? [m.hari] : []}));
-      if(tambahan.length){
-        state.matkul = [...state.matkul, ...tambahan];
-        await saveMatkul();
-      }
-    }
+    // CATATAN: Migrasi otomatis (yang dulu menambahkan ulang mata kuliah dari SEED_MATKUL
+    // setiap kali kelas dibuka) sudah DIMATIKAN. Dulu ini menyebabkan mata kuliah yang sudah
+    // dihapus admin lewat tab "Mata Kuliah" selalu muncul lagi setiap halaman dibuka ulang,
+    // karena sistem menganggapnya "belum ada" dan menambahkannya lagi secara otomatis.
+    // Sekarang data mata kuliah tersimpan (state.matkul) dipakai apa adanya -- kalau admin
+    // menghapus satu mata kuliah, mata kuliah itu akan tetap terhapus permanen.
   } else if(SEED_MATKUL[base]){
     // first time this class is opened: pre-fill with the official matkul list (with jam/pertemuan + hari perkiraan)
     state.matkul = SEED_MATKUL[base].map(m=>({id:uid(), nama:m.nama, jam:m.jam, hari: m.hari ? [m.hari] : []}));

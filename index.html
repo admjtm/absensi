@@ -2336,6 +2336,8 @@ let state = {
   matkul: [],
   scans: [],
   rekap: {},   // scanId -> { studentId: statusCode }
+  libur: [],   // {id, matkulId, matkulNama, tanggal, keterangan, markedAt} -- sesi yang ditandai
+               // TIDAK ADA KULIAH (mis. dosen tidak masuk) sehingga dikecualikan dari Alpa otomatis
   loading: true,
   modal: null, // { type:'image', url } | { type:'rekap', scan }
   summaryMatkulId: null,
@@ -2365,7 +2367,7 @@ function saveCachedClass(base){
   try{
     localStorage.setItem(CLASS_CACHE_PREFIX+base, JSON.stringify({
       students: state.students, matkul: state.matkul, scans: state.scans,
-      rekap: state.rekap, semesterStart: state.semesterStart,
+      rekap: state.rekap, semesterStart: state.semesterStart, libur: state.libur,
     }));
   }catch(e){ /* localStorage penuh/diblokir -- abaikan, tidak fatal */ }
 }
@@ -2381,13 +2383,14 @@ async function loadClass(){
     normalizeMatkulHari();
     state.scans = cached.scans || [];
     state.rekap = cached.rekap || {};
+    state.libur = cached.libur || [];
     state.semesterStart = cached.semesterStart || DEFAULT_SEMESTER_START;
     state.loading = false;
   } else {
     state.loading = true;
   }
   render();
-  const [rosterRes, matkul, scans, rekap, semStart] = await batchGetClassData_(base);
+  const [rosterRes, matkul, scans, rekap, semStart, libur] = await batchGetClassData_(base);
   if(base !== keyBase()){
     // Pengguna sudah pindah ke kelas lain sebelum data ini selesai diambil -- buang hasil
     // ini supaya tidak menimpa data kelas yang sedang ditampilkan sekarang.
@@ -2447,6 +2450,7 @@ async function loadClass(){
   }
   state.scans = scans;
   state.rekap = rekap;
+  state.libur = libur || [];
   if(semStart){
     state.semesterStart = semStart;
   } else {
@@ -2464,7 +2468,7 @@ async function loadClass(){
 // browser). Kalau backend lama (belum mendukung ?keys=) masih terpasang, otomatis
 // jatuh ke cara lama (5 request terpisah) supaya aplikasi tetap jalan normal.
 async function batchGetClassData_(base){
-  const keys = ['roster:'+base, 'matkul:'+base, 'scans:'+base, 'rekap:'+base, 'semesterStart:'+base];
+  const keys = ['roster:'+base, 'matkul:'+base, 'scans:'+base, 'rekap:'+base, 'semesterStart:'+base, 'libur:'+base];
   try{
     const res = await fetch(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')));
     const r = await res.json();
@@ -2481,6 +2485,7 @@ async function batchGetClassData_(base){
         parse(keys[2], []).value,
         parse(keys[3], {}).value,
         parse(keys[4], null).value,
+        parse(keys[5], []).value,
       ];
     }
   }catch(e){ console.error('Batch load gagal, jatuh ke cara lama:', e); }
@@ -2491,6 +2496,7 @@ async function batchGetClassData_(base){
     safeGet(keys[2], []),
     safeGet(keys[3], {}),
     safeGet(keys[4], null),
+    safeGet(keys[5], []),
   ]);
 }
 async function safeGet(key, fallback){
@@ -2516,6 +2522,7 @@ async function saveMatkul(){ await safeSet('matkul:'+keyBase(), state.matkul); s
 async function saveScans(){ await safeSet('scans:'+keyBase(), state.scans); saveCachedClass(keyBase()); }
 async function saveRekap(){ await safeSet('rekap:'+keyBase(), state.rekap); saveCachedClass(keyBase()); }
 async function saveSemesterStart(){ await safeSet('semesterStart:'+keyBase(), state.semesterStart); saveCachedClass(keyBase()); }
+async function saveLibur(){ await safeSet('libur:'+keyBase(), state.libur); saveCachedClass(keyBase()); }
 // Upload gambar (data URL base64 hasil compressImage) ke Google Drive lewat Apps Script,
 // mengembalikan URL gambar tersimpan di Drive. Foto TIDAK lagi disimpan sebagai teks base64
 // di Google Sheets, supaya tidak kena batas 50.000 karakter per sel.
@@ -3062,12 +3069,58 @@ function renderUpload(){
   const missing = missingUploadSessions();
   const missingBanner = missing.length ? `
     <div class="note" style="border-left:3px solid var(--danger); background:#FDEEEC; margin-bottom:16px; padding:12px 14px;">
-      <strong>&#9888; ${missing.length} sesi belum diupload</strong> -- otomatis dihitung <strong>Alpa (A)</strong> untuk SEMUA mahasiswa di tab Rekap sampai scan-nya diunggah:
-      <ul style="margin:8px 0 0; padding-left:18px;">
-        ${missing.slice(0,8).map(m=>`<li>${escapeHtml(m.matkulNama)} &mdash; ${formatDate(m.tanggal)}</li>`).join('')}
+      <strong>&#9888; ${missing.length} sesi belum diupload</strong> -- otomatis dihitung <strong>Alpa (A)</strong> untuk SEMUA mahasiswa di tab Rekap sampai scan-nya diunggah. Kalau ternyata dosennya yang tidak masuk (bukan lupa upload), klik "Tandai" supaya tidak dihitung Alpa:
+      <ul style="margin:8px 0 0; padding-left:18px; list-style:none;">
+        ${missing.slice(0,8).map(m=>`<li style="margin-bottom:4px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span>${escapeHtml(m.matkulNama)} &mdash; ${formatDate(m.tanggal)}</span>
+          <button type="button" class="btn btn-ghost btn-sm" data-quick-libur="${m.matkulId}" data-quick-libur-tanggal="${m.tanggal}">Tandai dosen tidak masuk</button>
+        </li>`).join('')}
         ${missing.length>8 ? `<li>...dan ${missing.length-8} sesi lainnya</li>` : ''}
       </ul>
     </div>` : '';
+
+  // Form untuk menandai 1 sesi (matkul + tanggal) sebagai "TIDAK ADA KULIAH" (mis. dosen
+  // tidak masuk) -- supaya sesi itu dikecualikan dari perhitungan Alpa otomatis, bukannya
+  // ikut tercatat Alpa untuk semua mahasiswa hanya karena tidak ada lembar absen untuk diupload.
+  const liburSorted = [...(state.libur||[])].sort((a,b)=> b.tanggal.localeCompare(a.tanggal));
+  const liburForm = `
+    <form id="liburForm" class="field-row" style="margin-bottom:14px;">
+      <div class="field">
+        <label>Mata Kuliah</label>
+        <select name="matkulId" id="liburMatkulSelect" required ${state.matkul.length?'':'disabled'}>
+          <option value="">${state.matkul.length? 'Pilih mata kuliah' : 'Belum ada matkul'}</option>
+          ${state.matkul.map(m=>`<option value="${m.id}">${escapeHtml(m.nama)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Tanggal</label><input type="date" name="tanggal" id="liburTanggalInput" required value="${todayStr()}"></div>
+      <div class="field" style="flex:1; min-width:220px;"><label>Keterangan (opsional)</label><input name="keterangan" placeholder="Contoh: Dosen tidak masuk, tidak ada pengganti"></div>
+      <button class="btn btn-primary" type="submit" ${state.matkul.length?'':'disabled'}>Tandai Tidak Ada Kuliah</button>
+    </form>
+  `;
+  const liburRows = liburSorted.map(l=>`
+    <tr>
+      <td>${formatDate(l.tanggal)}</td>
+      <td>${escapeHtml(l.matkulNama)}</td>
+      <td>${escapeHtml(l.keterangan||'-')}</td>
+      <td><button class="btn btn-danger-ghost btn-sm" data-del-libur="${l.id}">Batalkan</button></td>
+    </tr>`).join('');
+  const liburPanel = `
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Dosen Tidak Masuk / Tidak Ada Kuliah</h2>
+        <p>Kalau dosen tidak masuk sehingga lembar absensi tidak sempat diisi hari itu, tandai sesinya di sini -- sesi ini akan DIKECUALIKAN dari perhitungan Alpa untuk semua mahasiswa di tab Rekap. Jangan ditandai kalau kuliahnya tetap berlangsung, cukup upload scan seperti biasa.</p>
+      </div>
+    </div>
+    ${liburForm}
+    ${liburRows ? `
+    <div style="overflow-x:auto;">
+      <table style="width:100%;">
+        <thead><tr><th>Tanggal</th><th>Mata Kuliah</th><th>Keterangan</th><th style="width:120px;">Aksi</th></tr></thead>
+        <tbody>${liburRows}</tbody>
+      </table>
+    </div>` : `<div class="note">Belum ada sesi yang ditandai dosen tidak masuk / libur.</div>`}
+  </div>`;
 
   // Form upload sekarang boleh dipakai Admin maupun Ketua Kelas -- keduanya bisa unggah scan.
   const uploadForm = `
@@ -3117,7 +3170,8 @@ function renderUpload(){
         <h3>Belum ada scan diunggah</h3>
         <p>Admin dan Ketua Kelas dapat mengunggah scan absensi lewat form di atas.</p>
       </div>`}
-  </div>`;
+  </div>
+  ${liburPanel}`;
 }
 
 /* ---- Rekap Kehadiran ---- */
@@ -3175,6 +3229,7 @@ function hitungRekapMatkul(matkulId){
     let S=0,I=0,A=0;
     dates.forEach(tanggal=>{
       const sc = state.scans.find(s=>s.matkulId===matkulId && s.tanggal===tanggal);
+      if(isLiburSesi(matkulId, tanggal) && !sc) return; // Dosen Tidak Masuk & belum ada scan pengganti -> tidak dihitung S/I/A sama sekali (tapi tetap masuk totalPertemuan)
       if(!sc || !sc.direkap){
         // Belum diupload sama sekali, ATAU sudah diupload tapi admin belum mengisi
         // rekap utk sesi ini -> semua mahasiswa dianggap Alpa dulu.
@@ -3356,6 +3411,11 @@ function renderWeeklyRecap(){
       }
       const dateForDay = toISO(addDaysDate(monday, dIdx));
       list.forEach(mk=>{
+        const adaScanPengganti = state.scans.some(s=>s.matkulId===mk.id && s.tanggal===dateForDay);
+        if(isLiburSesi(mk.id, dateForDay) && !adaScanPengganti){
+          dayCells += `<td colspan="3" class="mono sia-cell" style="color:var(--ink-soft); font-style:italic; font-size:9px; white-space:nowrap;">Tidak ada pertemuan</td>`;
+          return;
+        }
         const { S:wS, I:wI, A:wA } = sessionStatusForDate(mk, dateForDay, st.id);
         dayCells += `<td class="mono sia-cell">${wS||''}</td><td class="mono sia-cell">${wI||''}</td><td class="mono sia-cell">${wA||''}</td>`;
       });
@@ -3844,6 +3904,40 @@ function attachHandlers(){
     state.modal = { type:'image', id:b.dataset.viewImage };
     renderModal();
   }));
+  const liburForm = document.getElementById('liburForm');
+  if(liburForm) liburForm.addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const fd = new FormData(liburForm);
+    const matkulId = fd.get('matkulId');
+    const tanggal = fd.get('tanggal');
+    const keterangan = (fd.get('keterangan')||'').trim();
+    if(!matkulId || !tanggal){ alert('Pilih mata kuliah dan tanggal dulu.'); return; }
+    const mk = state.matkul.find(m=>m.id===matkulId);
+    if(state.libur.some(l=>l.matkulId===matkulId && l.tanggal===tanggal)){
+      alert('Sesi ini sudah ditandai tidak ada kuliah sebelumnya.');
+      return;
+    }
+    if(state.scans.some(s=>s.matkulId===matkulId && s.tanggal===tanggal)){
+      if(!confirm('Sudah ada scan absensi untuk sesi ini. Tetap tandai sebagai "tidak ada kuliah"?')) return;
+    }
+    state.libur.push({ id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, keterangan, markedAt:new Date().toISOString() });
+    render();
+    saveLibur();
+  });
+  document.querySelectorAll('[data-quick-libur]').forEach(b=> b.addEventListener('click', ()=>{
+    const sel = document.getElementById('liburMatkulSelect');
+    const tgl = document.getElementById('liburTanggalInput');
+    if(sel) sel.value = b.dataset.quickLibur;
+    if(tgl) tgl.value = b.dataset.quickLiburTanggal;
+    const form = document.getElementById('liburForm');
+    if(form) form.scrollIntoView({behavior:'smooth', block:'center'});
+  }));
+  document.querySelectorAll('[data-del-libur]').forEach(b=> b.addEventListener('click', ()=>{
+    if(!confirm('Batalkan tanda "tidak ada kuliah" untuk sesi ini? Sesi akan kembali dihitung normal (Alpa kalau belum ada scan).')) return;
+    state.libur = state.libur.filter(l=>l.id!==b.dataset.delLibur);
+    render();
+    saveLibur();
+  }));
   document.querySelectorAll('[data-open-rekap]').forEach(b=> b.addEventListener('click', ()=>{
     if(state.role!=='admin') return; // hanya Admin yang boleh mengisi/mengubah rekap
     state.modal = { type:'rekap', id:b.dataset.openRekap };
@@ -3929,10 +4023,19 @@ function expectedSessionDatesForMatkul(mk, uptoDate){
   }
   return dates;
 }
+// Cek apakah 1 sesi (matkul + tanggal) sudah ditandai "TIDAK ADA KULIAH" (mis. dosen
+// tidak masuk / kelas kosong / hari libur) oleh Admin/Ketua Kelas lewat tab Upload.
+// Sesi yang ditandai begini DIKECUALIKAN dari perhitungan Alpa otomatis di semua rekap.
+function isLiburSesi(matkulId, tanggal){
+  return (state.libur||[]).some(l=>l.matkulId===matkulId && l.tanggal===tanggal);
+}
 // Gabungan semua tanggal pertemuan untuk 1 matkul sampai uptoDate: tanggal terjadwal
 // (expectedSessionDatesForMatkul) DIGABUNG dengan tanggal scan yang benar-benar ada
 // (jaga-jaga kalau ada scan di luar jadwal, mis. kuliah pengganti) -- supaya scan itu
-// tetap terhitung, bukan malah hilang.
+// tetap terhitung, bukan malah hilang. CATATAN: sesi yang ditandai "Dosen Tidak Masuk"
+// TETAP masuk di sini (total pertemuan/jam matkul TIDAK berkurang) -- yang berubah hanya
+// cara sesi itu dihitung per mahasiswa, lihat isLiburSesi() dipakai di hitungRekapMatkul,
+// sessionStatusForDate, dan cumulativeSIA.
 function allSessionDatesForMatkul(mk, uptoDate){
   const set = new Set(expectedSessionDatesForMatkul(mk, uptoDate));
   state.scans.forEach(sc=>{
@@ -3949,6 +4052,7 @@ function missingUploadSessions(){
   const missing = [];
   state.matkul.forEach(mk=>{
     expectedSessionDatesForMatkul(mk, cap).forEach(tanggal=>{
+      if(isLiburSesi(mk.id, tanggal)) return; // sudah ditandai dosen tidak masuk/libur, tidak perlu upload
       const ada = state.scans.some(s=>s.matkulId===mk.id && s.tanggal===tanggal);
       if(!ada) missing.push({ matkulId:mk.id, matkulNama:mk.nama, tanggal });
     });
@@ -3988,6 +4092,7 @@ function sessionStatusForDate(mk, dateStr, studentId){
   const terjadwalHariItu = dn && hariArrayOf(mk).includes(dn);
   const sc = state.scans.find(s=>s.matkulId===mk.id && s.tanggal===dateStr);
   const sudahLewat = d <= todayDateCap();
+  if(isLiburSesi(mk.id, dateStr) && !sc) return {S:0,I:0,A:0}; // ditandai dosen tidak masuk/libur -> tidak dihitung
   if(!terjadwalHariItu && !sc) return {S:0,I:0,A:0}; // tidak ada sesi sama sekali tanggal ini
   if(!sudahLewat && !sc) return {S:0,I:0,A:0}; // tanggal belum terjadi & belum ada scan -> kosong, bukan Alpa
   if(!sc || !sc.direkap){
@@ -4009,6 +4114,7 @@ function cumulativeSIA(uptoDate, matkulId, studentId){
   const jam = mk.jam||1;
   allSessionDatesForMatkul(mk, uptoDate).forEach(tanggal=>{
     const sc = state.scans.find(s=>s.matkulId===matkulId && s.tanggal===tanggal);
+    if(isLiburSesi(matkulId, tanggal) && !sc) return; // Dosen Tidak Masuk & belum ada scan pengganti -> tidak dihitung S/I/A sama sekali
     if(!sc || !sc.direkap){
       // Belum diupload sama sekali, ATAU sudah diupload tapi admin belum mengisi rekap
       // -> default Alpa dulu.
@@ -4125,6 +4231,12 @@ function buildRekapMingguanBlocks_(weekNumbers){
       DAYS_ID.forEach((day,dIdx)=>{
         const dateForDay = toISO(addDaysDate(monday, dIdx));
         matkulByHari[day].forEach(mk=>{
+          const adaScanPengganti = state.scans.some(s=>s.matkulId===mk.id && s.tanggal===dateForDay);
+          if(isLiburSesi(mk.id, dateForDay) && !adaScanPengganti){
+            setCell(r,c2,'Tidak ada pertemuan'); mergeRange(r,c2,r,c2+2);
+            c2+=3;
+            return;
+          }
           const { S:wS, I:wI, A:wA } = sessionStatusForDate(mk, dateForDay, st.id);
           if(wS) setCell(r,c2,wS);
           if(wI) setCell(r,c2+1,wI);

@@ -3109,6 +3109,7 @@ function renderUpload(){
     <div class="panel-head">
       <div>
         <h2>Dosen Tidak Masuk / Tidak Ada Kuliah</h2>
+        <p>Kalau dosen tidak masuk sehingga lembar absensi tidak sempat diisi hari itu, tandai sesinya di sini -- sesi ini akan DIKECUALIKAN dari perhitungan Alpa untuk semua mahasiswa di tab Rekap. Jangan ditandai kalau kuliahnya tetap berlangsung, cukup upload scan seperti biasa.</p>
       </div>
     </div>
     ${liburForm}
@@ -3349,8 +3350,19 @@ function renderWeeklyRecap(){
   const saturday = addDaysDate(monday, 5);
   const prevSaturday = addDaysDate(monday, -2);
 
+  // List mata kuliah per hari UNTUK MINGGU INI: jadwal tetap (hariArrayOf) DITAMBAH mata kuliah
+  // yang punya scan pada tanggal itu meski bukan hari jadwal normalnya -- ini menangani kasus
+  // kuliah pengganti/dipindah hari (mis. Matematika biasanya Selasa, minggu ini pindah ke Rabu
+  // karena Selasa tidak jadi kuliah -- begitu scan-nya diupload dengan tanggal Rabu, kolom Rabu
+  // otomatis memunculkan Matematika di minggu itu).
   const matkulByHari = {};
-  DAYS_ID.forEach(d=> matkulByHari[d] = state.matkul.filter(m=>hariArrayOf(m).includes(d)));
+  DAYS_ID.forEach((day,dIdx)=>{
+    const dateForDay = toISO(addDaysDate(monday, dIdx));
+    const scheduled = state.matkul.filter(m=>hariArrayOf(m).includes(day));
+    const scheduledIds = new Set(scheduled.map(m=>m.id));
+    const pengganti = state.matkul.filter(m=> !scheduledIds.has(m.id) && state.scans.some(s=>s.matkulId===m.id && s.tanggal===dateForDay));
+    matkulByHari[day] = [...scheduled, ...pengganti];
+  });
   const adaJadwal = state.matkul.some(m=>hariArrayOf(m).length);
 
   const weekOptions = Array.from({length:TOTAL_WEEKS}, (_,i)=>i+1).map(w=>{
@@ -3377,7 +3389,8 @@ function renderWeeklyRecap(){
     dayHeaderCells += `<th colspan="${list.length*3}">${day}, ${fmtDDMMYYYY(dateForDay)}</th>`;
     list.forEach(mk=>{
       jumlahMatkulTampil++;
-      matkulSubHeaderCells += `<th colspan="3" style="font-weight:600;">${escapeHtml(mk.nama)}<br><span class="mono" style="font-weight:400;">${mk.jam||1}j</span></th>`;
+      const isPengganti = !hariArrayOf(mk).includes(day);
+      matkulSubHeaderCells += `<th colspan="3" style="font-weight:600;">${escapeHtml(mk.nama)}<br><span class="mono" style="font-weight:400;">${mk.jam||1}j</span>${isPengganti ? `<br><span style="font-weight:600; color:var(--primary); font-size:9px;">(Pengganti)</span>` : ''}</th>`;
       matkulSIACells += `<th style="font-weight:500;">S</th><th style="font-weight:500;">I</th><th style="font-weight:500;">A</th>`;
     });
   });
@@ -4171,9 +4184,6 @@ function exportWeeklyExcelOne_(){
 // rekapitulasi absensi jurusan. Dipakai bersama oleh exportOfficialExcel (semua minggu) dan
 // exportWeeklyExcelOne_ (1 minggu saja, sesuai yang sedang dipilih di layar).
 function buildRekapMingguanBlocks_(weekNumbers){
-  const matkulByHari = {};
-  DAYS_ID.forEach(d=> matkulByHari[d] = state.matkul.filter(m=>hariArrayOf(m).includes(d)));
-
   const colNO=1, colBP=2, colNAMA=3, colS=4, colI=5, colA=6, colJUMLAH=7, colPKTOS=8, colKOMP=9, colStart=10;
   const data = [];
   const merges = [];
@@ -4185,6 +4195,17 @@ function buildRekapMingguanBlocks_(weekNumbers){
     const monday = weekMondayOf(week, state.semesterStart);
     const saturday = addDaysDate(monday, 5); // Sabtu = akhir minggu kuliah (Senin-Sabtu)
     const prevSaturday = addDaysDate(monday, -2); // Sabtu minggu sebelumnya
+
+    // List mata kuliah per hari UNTUK MINGGU INI: jadwal tetap DITAMBAH mata kuliah yang punya
+    // scan pada tanggal itu meski bukan hari jadwal normalnya (kuliah pengganti/dipindah hari).
+    const matkulByHari = {};
+    DAYS_ID.forEach((day,dIdx)=>{
+      const dateForDay = toISO(addDaysDate(monday, dIdx));
+      const scheduled = state.matkul.filter(m=>hariArrayOf(m).includes(day));
+      const scheduledIds = new Set(scheduled.map(m=>m.id));
+      const pengganti = state.matkul.filter(m=> !scheduledIds.has(m.id) && state.scans.some(s=>s.matkulId===m.id && s.tanggal===dateForDay));
+      matkulByHari[day] = [...scheduled, ...pengganti];
+    });
 
     const rTitle=row, rJurusan=row+1, rProdi=row+2, rKelas=row+3, rHead=row+4, rSub=row+5, rJam=row+6, rSIA=row+7;
 
@@ -4210,7 +4231,8 @@ function buildRekapMingguanBlocks_(weekNumbers){
       const dayStartCol = col;
       const dateForDay = addDaysDate(monday, dIdx);
       list.forEach(mk=>{
-        setCell(rSub,col,mk.nama); mergeRange(rSub,col,rSub,col+2);
+        const isPengganti = !hariArrayOf(mk).includes(day);
+        setCell(rSub,col,mk.nama + (isPengganti ? ' (Pengganti)' : '')); mergeRange(rSub,col,rSub,col+2);
         setCell(rJam,col,(mk.jam||1)+' jam'); mergeRange(rJam,col,rJam,col+2);
         setCell(rSIA,col,'S'); setCell(rSIA,col+1,'I'); setCell(rSIA,col+2,'A');
         col+=3;

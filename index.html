@@ -455,7 +455,7 @@ function kelasD3(){ const t=[]; for(let tk=1;tk<=3;tk++) for(const h of ['A','B'
 // D3 Teknik Alat Berat kelasnya cuma A-C per tingkat (1,2,3) -- beda dari D3 Teknik Mesin yang A-F.
 // Kecuali tingkat 1 yang sudah ditambah kelas D (1D), jadi tingkat 1 = A-D, tingkat 2 & 3 tetap A-C.
 function kelasD3TAB(){ const t=[]; for(let tk=1;tk<=3;tk++){ const huruf = tk===1 ? ['A','B','C','D'] : ['A','B','C']; for(const h of huruf) t.push(tk+h); } return t; }
-function kelasD4(){ const t=[]; for(let tk=1;tk<=2;tk++) for(const h of ['A','B','C','D','E','F']) t.push(tk+h); t.push('3A','3B','4A','4B'); return t; }
+function kelasD4(){ const t=[]; for(let tk=1;tk<=2;tk++) for(const h of ['A','B']) t.push(tk+h); t.push('3A','3B','4A','4B'); return t; }
 
 const STATUS = [
   { code:'H', label:'Hadir' },
@@ -2226,30 +2226,14 @@ const MATKUL_SMT5_D3TM = [
 const SEED_MATKUL = {
   'd4rpm:1A': MATKUL_SMT1_D4RPM,
   'd4rpm:1B': MATKUL_SMT1_D4RPM,
-  'd4rpm:1C': MATKUL_SMT1_D4RPM,
-  'd4rpm:1D': MATKUL_SMT1_D4RPM,
-  'd4rpm:1E': MATKUL_SMT1_D4RPM,
-  'd4rpm:1F': MATKUL_SMT1_D4RPM,
   'd4rpm:2A': MATKUL_SMT3_D4RPM,
   'd4rpm:2B': MATKUL_SMT3_D4RPM,
-  'd4rpm:2C': MATKUL_SMT3_D4RPM,
-  'd4rpm:2D': MATKUL_SMT3_D4RPM,
-  'd4rpm:2E': MATKUL_SMT3_D4RPM,
-  'd4rpm:2F': MATKUL_SMT3_D4RPM,
   'd4rpm:3A': MATKUL_SMT5_D4RPM,
   'd4rpm:3B': MATKUL_SMT5_D4RPM,
   'd4tmpr:1A': MATKUL_SMT1_D4TMA,
   'd4tmpr:1B': MATKUL_SMT1_D4TMA,
-  'd4tmpr:1C': MATKUL_SMT1_D4TMA,
-  'd4tmpr:1D': MATKUL_SMT1_D4TMA,
-  'd4tmpr:1E': MATKUL_SMT1_D4TMA,
-  'd4tmpr:1F': MATKUL_SMT1_D4TMA,
   'd4tmpr:2A': MATKUL_SMT3_D4TMA,
   'd4tmpr:2B': MATKUL_SMT3_D4TMA,
-  'd4tmpr:2C': MATKUL_SMT3_D4TMA,
-  'd4tmpr:2D': MATKUL_SMT3_D4TMA,
-  'd4tmpr:2E': MATKUL_SMT3_D4TMA,
-  'd4tmpr:2F': MATKUL_SMT3_D4TMA,
   'd4tmpr:3A': MATKUL_SMT5_D4TMA,
   'd4tmpr:3B': MATKUL_SMT5_D4TMA,
   'd3tab:1A': MATKUL_SMT1_D3TAB,

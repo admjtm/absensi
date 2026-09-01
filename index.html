@@ -453,7 +453,8 @@ const PRODI = [
 ];
 function kelasD3(){ const t=[]; for(let tk=1;tk<=3;tk++) for(const h of ['A','B','C','D','E','F']) t.push(tk+h); return t; }
 // D3 Teknik Alat Berat kelasnya cuma A-C per tingkat (1,2,3) -- beda dari D3 Teknik Mesin yang A-F.
-function kelasD3TAB(){ const t=[]; for(let tk=1;tk<=3;tk++) for(const h of ['A','B','C']) t.push(tk+h); return t; }
+// Kecuali tingkat 1 yang sudah ditambah kelas D (1D), jadi tingkat 1 = A-D, tingkat 2 & 3 tetap A-C.
+function kelasD3TAB(){ const t=[]; for(let tk=1;tk<=3;tk++){ const huruf = tk===1 ? ['A','B','C','D'] : ['A','B','C']; for(const h of huruf) t.push(tk+h); } return t; }
 function kelasD4(){ const t=[]; for(let tk=1;tk<=2;tk++) for(const h of ['A','B','C','D','E','F']) t.push(tk+h); t.push('3A','3B','4A','4B'); return t; }
 
 const STATUS = [
@@ -2101,7 +2102,7 @@ const MATKUL_SMT5_D4RPM = [
   { nama:'RPM4311 Analisis Kegagalan', jam:2, hari:'Kamis' },
   { nama:'RPM4312 Perpindahan Panas', jam:2, hari:'Jumat' },
 ];
-// Mata kuliah semester 1 D3 Teknik Alat Berat, berlaku sama untuk kelas 1A-1C
+// Mata kuliah semester 1 D3 Teknik Alat Berat, berlaku sama untuk kelas 1A-1D
 // CATATAN: "Praktek Fundamental Engine & Fundamental Listrik" belum ada kode TAB-nya
 // dari yang diberikan -- tambahkan kalau sudah ada kodenya.
 const MATKUL_SMT1_D3TAB = [
@@ -2254,6 +2255,7 @@ const SEED_MATKUL = {
   'd3tab:1A': MATKUL_SMT1_D3TAB,
   'd3tab:1B': MATKUL_SMT1_D3TAB,
   'd3tab:1C': MATKUL_SMT1_D3TAB,
+  'd3tab:1D': MATKUL_SMT1_D3TAB,
   'd3tab:2A': MATKUL_SMT3_D3TAB,
   'd3tab:2B': MATKUL_SMT3_D3TAB,
   'd3tab:2C': MATKUL_SMT3_D3TAB,
@@ -3000,7 +3002,7 @@ function renderMatkul(){
     ${state.matkul.length ? `
       <div style="overflow-x:auto;">
       <table style="width:100%;">
-        <thead><tr><th style="width:32px;">No</th><th style="white-space:nowrap;">Nama Mata Kuliah</th><th style="width:90px;">Jam/Pertemuan</th><th style="min-width:520px;">Hari</th><th style="width:64px;">Aksi</th></tr></thead>
+        <thead><tr><th style="width:32px;">No</th><th style="white-space:nowrap;">Nama Mata Kuliah</th><th style="width:90px;">Jam/Pertemuan</th><th style="min-width:520px;">Hari</th><th style="width:130px;">Aksi</th></tr></thead>
         <tbody>
           ${state.matkul.map((m,i)=>`
             <tr>
@@ -3017,7 +3019,10 @@ function renderMatkul(){
                 </div>
                 ${!(m.hari&&m.hari.length) ? `<div style="color:var(--ink-soft); font-size:11px; margin-top:6px;">&mdash; Belum diatur &mdash;</div>` : ''}
               </td>
-              <td><button class="btn btn-danger-ghost btn-sm" data-del-matkul="${m.id}">Hapus</button></td>
+              <td>
+                <button class="btn btn-ghost btn-sm" data-edit-matkul="${m.id}">Edit</button>
+                <button class="btn btn-danger-ghost btn-sm" data-del-matkul="${m.id}">Hapus</button>
+              </td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -3180,8 +3185,8 @@ function hitungRekapMatkul(matkulId){
       const status = r ? r[st.id] : null;
       if(status==='S') S++;
       else if(status==='I') I++;
-      else if(status==='A') A++;
-      else A++; // sudah direkap tapi status mahasiswa ini belum ditandai -> anggap Alpa juga
+      else if(status==='H') { /* Hadir -> tidak dihitung S/I/A sama sekali */ }
+      else A++; // status 'A' atau belum ditandai admin -> Alpa
     });
     perStudent[st.id] = {
       S, I, A, jumlahPertemuan: S+I+A,
@@ -3758,6 +3763,22 @@ function attachHandlers(){
     render();
     saveMatkul();
   }));
+  document.querySelectorAll('[data-edit-matkul]').forEach(b=> b.addEventListener('click', ()=>{
+    const mk = state.matkul.find(m=>m.id===b.dataset.editMatkul);
+    if(!mk) return;
+    const nama = prompt('Nama Mata Kuliah:', mk.nama); if(nama===null) return;
+    const jamStr = prompt('Jam/Pertemuan:', mk.jam||1); if(jamStr===null) return;
+    const jam = parseFloat(jamStr);
+    const namaTrim = nama.trim();
+    if(namaTrim && state.matkul.some(m=>m.id!==mk.id && m.nama.trim()===namaTrim)){
+      alert('Mata kuliah dengan nama ini sudah ada di daftar.');
+      return;
+    }
+    mk.nama = namaTrim || mk.nama;
+    if(!isNaN(jam) && jam>0) mk.jam = jam;
+    render();
+    saveMatkul();
+  }));
   document.querySelectorAll('[data-toggle-hari]').forEach(chk=> chk.addEventListener('change', ()=>{
     const mk = state.matkul.find(m=>m.id===chk.dataset.toggleHari);
     if(!mk) return;
@@ -3978,6 +3999,7 @@ function sessionStatusForDate(mk, dateStr, studentId){
   const status = r ? r[studentId] : null;
   if(status==='S') return {S:jam,I:0,A:0};
   if(status==='I') return {S:0,I:jam,A:0};
+  if(status==='H') return {S:0,I:0,A:0}; // Hadir -> tidak dihitung S/I/A sama sekali
   return {S:0,I:0,A:jam}; // status 'A' atau belum ditandai admin -> Alpa
 }
 function cumulativeSIA(uptoDate, matkulId, studentId){
@@ -3997,8 +4019,8 @@ function cumulativeSIA(uptoDate, matkulId, studentId){
     const status = r ? r[studentId] : null;
     if(status==='S') S+=jam;
     else if(status==='I') I+=jam;
-    else if(status==='A') A+=jam;
-    else A+=jam; // sudah direkap tapi status mahasiswa ini belum ditandai -> anggap Alpa juga
+    else if(status==='H') { /* Hadir -> tidak dihitung S/I/A sama sekali */ }
+    else A+=jam; // status 'A' atau belum ditandai -> Alpa
   });
   return {S,I,A};
 }

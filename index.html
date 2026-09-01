@@ -271,7 +271,7 @@
     overflow:auto; max-height:78vh; border:1px solid var(--line-strong); border-radius:8px;
     background:#f3f3f3; touch-action:pinch-zoom;
   }
-  .img-zoom-target{ display:block; cursor:zoom-in; border-radius:6px; }
+  .img-zoom-target{ display:block; cursor:zoom-in; border-radius:6px; transition:transform .15s ease; }
   .excel-table--fit thead th{ padding:4px 3px; font-size:10px; text-align:center; vertical-align:middle; white-space:normal; word-break:break-word; }
   .excel-table--fit tbody td{ white-space:nowrap; }
   .excel-table--fit td.nim, .excel-table--fit td.mono{ font-size:10.5px; }
@@ -3499,35 +3499,49 @@ function renderWeeklyRecap(){
 // otomatis kalau halaman di-reload (murni disimpan di memori, tidak perlu disimpan
 // ke server).
 const imgZoomLevels = {};
+// Rotasi foto scan absensi (0/90/180/270 derajat), disimpan per-scan (key sama dengan
+// imgZoomLevels) -- supaya lembar absen yang difoto miring/menyamping bisa diputar tegak
+// dulu sebelum dibaca/di-zoom. Sama seperti zoom, ini murni di memori & reset saat reload.
+const imgRotations = {};
 function renderZoomableImage(dataUrl, alt, uid){
   const z = imgZoomLevels[uid] || 1;
+  const rot = imgRotations[uid] || 0;
   return `
     <div class="img-zoom-controls">
       <button type="button" class="btn btn-ghost btn-sm" data-img-zoom-out="${uid}" title="Perkecil foto" style="padding:4px 10px;">&minus;</button>
       <span class="mono zoom-label" id="imgZoomLabel_${uid}">${Math.round(z*100)}%</span>
       <button type="button" class="btn btn-ghost btn-sm" data-img-zoom-in="${uid}" title="Perbesar foto" style="padding:4px 10px;">&plus;</button>
       <button type="button" class="btn btn-ghost btn-sm" data-img-zoom-reset="${uid}" title="Ukuran normal" style="padding:4px 10px; font-size:11px;">Reset</button>
+      <span style="width:1px; align-self:stretch; background:var(--line-strong); margin:0 2px;"></span>
+      <button type="button" class="btn btn-ghost btn-sm" data-img-rotate-left="${uid}" title="Putar 90&deg; kiri" style="padding:4px 10px;">&#8634;</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-img-rotate-right="${uid}" title="Putar 90&deg; kanan" style="padding:4px 10px;">&#8635;</button>
       <span class="note" style="margin:0 0 0 4px;">Cubit (pinch) atau klik dobel foto untuk zoom</span>
     </div>
     <div class="img-zoom-viewport" id="imgZoomViewport_${uid}">
-      <img class="img-zoom-target" id="imgZoomTarget_${uid}" src="${dataUrl}" alt="${escapeHtml(alt)}" style="width:${Math.round(z*100)}%; max-width:none;">
+      <img class="img-zoom-target" id="imgZoomTarget_${uid}" src="${dataUrl}" alt="${escapeHtml(alt)}" style="width:${Math.round(z*100)}%; max-width:none; transform:rotate(${rot}deg);">
     </div>`;
 }
 function applyImgZoom(uid){
   const z = imgZoomLevels[uid] || 1;
+  const rot = imgRotations[uid] || 0;
   const img = document.getElementById('imgZoomTarget_'+uid);
   const label = document.getElementById('imgZoomLabel_'+uid);
-  if(img) img.style.width = Math.round(z*100)+'%';
+  if(img){ img.style.width = Math.round(z*100)+'%'; img.style.transform = 'rotate('+rot+'deg)'; }
   if(label) label.textContent = Math.round(z*100)+'%';
 }
 function attachImgZoomHandlers(root, uid){
   const setZoom = (z)=>{ imgZoomLevels[uid] = Math.max(1, Math.min(4, Math.round(z*10)/10)); applyImgZoom(uid); };
+  const setRotation = (deg)=>{ imgRotations[uid] = ((deg%360)+360)%360; applyImgZoom(uid); };
   const btnOut = root.querySelector(`[data-img-zoom-out="${uid}"]`);
   if(btnOut) btnOut.addEventListener('click', ()=> setZoom((imgZoomLevels[uid]||1)-0.25));
   const btnIn = root.querySelector(`[data-img-zoom-in="${uid}"]`);
   if(btnIn) btnIn.addEventListener('click', ()=> setZoom((imgZoomLevels[uid]||1)+0.25));
   const btnReset = root.querySelector(`[data-img-zoom-reset="${uid}"]`);
   if(btnReset) btnReset.addEventListener('click', ()=> setZoom(1));
+  const btnRotL = root.querySelector(`[data-img-rotate-left="${uid}"]`);
+  if(btnRotL) btnRotL.addEventListener('click', ()=> setRotation((imgRotations[uid]||0)-90));
+  const btnRotR = root.querySelector(`[data-img-rotate-right="${uid}"]`);
+  if(btnRotR) btnRotR.addEventListener('click', ()=> setRotation((imgRotations[uid]||0)+90));
   const img = root.querySelector('#imgZoomTarget_'+uid);
   if(img){
     // Klik dobel (atau tap dobel di HP) untuk cepat perbesar/kembali normal.

@@ -2835,6 +2835,7 @@ function renderMahasiswa(){
       <div class="field"><label>NIM</label><input name="nim" placeholder="Contoh: 2301021045" required></div>
       <button class="btn btn-primary" type="submit">+ Tambah Mahasiswa</button>
       <button type="button" class="btn btn-ghost" id="toggleImportBtn">Impor massal &darr;</button>
+      ${SEED_STUDENTS[keyBase()] ? `<button type="button" class="btn btn-danger-ghost" id="resetToSeedBtn">Reset ke Data Resmi</button>` : ''}
     </form>
     <div id="importBox" style="display:none; margin-bottom:16px;">
       <form id="importStudentForm">
@@ -3695,6 +3696,17 @@ function attachHandlers(){
     const nama = fd.get('nama').trim(), nim = fd.get('nim').trim();
     if(!nama||!nim) return;
     state.students.push({id:uid(), nama, nim});
+    render();
+    saveStudents();
+  });
+  const resetToSeedBtn = document.getElementById('resetToSeedBtn');
+  if(resetToSeedBtn) resetToSeedBtn.addEventListener('click', ()=>{
+    const base = keyBase();
+    const seed = SEED_STUDENTS[base];
+    if(!seed) return;
+    const ok = confirm('Ganti SELURUH daftar mahasiswa kelas '+state.kelas+' saat ini dengan data resmi ('+seed.length+' mahasiswa)? Data mahasiswa yang ada sekarang di kelas ini akan hilang dan tidak bisa dikembalikan.');
+    if(!ok) return;
+    state.students = seed.map(s=>({id:uid(), nama:s.nama, nim:s.nim}));
     render();
     saveStudents();
   });

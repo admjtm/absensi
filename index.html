@@ -2451,14 +2451,21 @@ function setKetuaUploadUnlockedToday(){
 // tidak muncul di komputer. Sekarang status ini disimpan permanen di localStorage per
 // perangkat/browser, supaya begitu 1x login Admin di suatu perangkat, perangkat itu akan
 // terus otomatis memantau notifikasi upload walau halaman dibuka ulang atau ditutup-buka lagi.
+// PERBAIKAN (lagi): sebelumnya status ini disimpan sebagai '1' TANPA tanggal, jadi begitu PIN
+// Admin benar 1x di suatu perangkat, status itu diingat PERMANEN SELAMANYA dan PIN tidak
+// pernah diminta lagi walau tanggal sudah berganti hari. Sekarang disimpan sebagai TANGGAL
+// (sama seperti KETUA_UPLOAD_UNLOCK_KEY di atas): unlock tetap bertahan selama masih di HARI
+// yang sama (jadi reload/tutup-buka halaman di hari yang sama tidak perlu PIN lagi, polling
+// notifikasi tetap jalan), tapi begitu tanggal berganti (dibuka lagi besok), PIN wajib
+// dimasukkan ulang -- konsisten dengan perilaku PIN Ketua Kelas.
 const ADMIN_UNLOCKED_KEY = 'absensiJtm_adminUnlocked';
 function isAdminUnlockedPersisted_(){
-  try{ return localStorage.getItem(ADMIN_UNLOCKED_KEY) === '1'; }
+  try{ return localStorage.getItem(ADMIN_UNLOCKED_KEY) === todayStr(); }
   catch(e){ return false; }
 }
 function setAdminUnlockedPersisted_(v){
   try{
-    if(v) localStorage.setItem(ADMIN_UNLOCKED_KEY, '1');
+    if(v) localStorage.setItem(ADMIN_UNLOCKED_KEY, todayStr());
     else localStorage.removeItem(ADMIN_UNLOCKED_KEY);
   }catch(e){ /* localStorage diblokir/penuh -- abaikan, tidak fatal */ }
 }
@@ -3757,7 +3764,7 @@ function renderModal(){
       e.preventDefault();
       if(pinInput.value === ADMIN_PIN){
         state.role = 'admin';
-        state.adminUnlocked = true; // diingat permanen (localStorage) di perangkat ini, tidak perlu PIN lagi
+        state.adminUnlocked = true; // diingat di perangkat ini untuk HARI INI saja, besok diminta PIN lagi
         setAdminUnlockedPersisted_(true);
         state.modal = null;
         startAdminNotifPolling();

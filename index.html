@@ -2723,6 +2723,46 @@ async function safeSet(key, value){
   }
 }
 
+// ---------- Penyimpanan anti-tabrakan (fetch data TERBARU dari server -> terapkan HANYA
+// perubahan yang sedang dilakukan -> simpan) ----------
+// BUG LAMA yang diperbaiki lewat 2 fungsi ini: saveMatkul/saveScans/saveRekap/dst sebelumnya
+// mengirim SELURUH isi state.matkul/scans/rekap yang ada di MEMORI PERANGKAT INI ke server,
+// menimpa apa pun yang baru saja disimpan oleh perangkat/tab LAIN (Admin lain, atau Ketua Kelas
+// yang upload scan) sejak halaman ini pertama dibuka/dimuat. Kalau tab dibiarkan terbuka lama
+// sambil orang lain mengisi rekap/upload scan/ubah jadwal di tempat lain, begitu tab ini
+// menyimpan sesuatu (walau cuma 1 rekap), SELURUH perubahan orang lain di sela-sela itu ikut
+// hilang tertimpa -- inilah sebab rekap yang "sudah dikerjakan tiba-tiba hilang" setiap hari,
+// dan jadwal/tabel absen yang "berubah sendiri".
+// Perbaikannya: sebelum menyimpan, SELALU ambil dulu data rekap/scans/matkul yang PALING BARU
+// dari server, baru terapkan perubahan yang sedang dilakukan device ini di atas data terbaru
+// itu (bukan di atas salinan lama di memori) -- supaya perubahan device lain tidak pernah hilang.
+async function safeSaveArray(key, stateField, applyFn){
+  let latest;
+  try{
+    const r = await safeGetRaw(key);
+    latest = (r.found && Array.isArray(r.value)) ? r.value : (state[stateField] || []);
+  }catch(e){ latest = state[stateField] || []; }
+  const result = applyFn(latest);
+  const finalArr = result || latest;
+  await safeSet(key, finalArr);
+  state[stateField] = finalArr;
+  saveCachedClass(keyBase());
+  render();
+}
+async function safeSaveObject(key, stateField, applyFn){
+  let latest;
+  try{
+    const r = await safeGetRaw(key);
+    latest = (r.found && r.value && typeof r.value==='object') ? r.value : (state[stateField] || {});
+  }catch(e){ latest = state[stateField] || {}; }
+  const result = applyFn(latest);
+  const finalObj = result || latest;
+  await safeSet(key, finalObj);
+  state[stateField] = finalObj;
+  saveCachedClass(keyBase());
+  render();
+}
+
 function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
 
 /* ---------------- Notifikasi Admin real-time (upload Ketua Kelas) ---------------- */
@@ -3879,12 +3919,20 @@ function renderModal(){
         const checked = rekapForm.querySelector(`input[name="st_${st.id}"]:checked`);
         result[st.id] = checked ? checked.value : 'H';
       });
+      // Update optimistis di layar supaya terasa instan, TAPI penyimpanan sesungguhnya
+      // (di bawah) selalu berbasis data server TERBARU supaya rekap dari device lain
+      // yang masuk di sela-sela ini tidak ikut tertimpa/hilang.
       state.rekap[scanId] = result;
       const scan = state.scans.find(s=>s.id===scanId);
       if(scan) scan.direkap = true;
       state.modal = null;
       render();
-      saveRekap(); saveScans();
+      safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{ latest[scanId] = result; return latest; });
+      safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
+        const idx = latest.findIndex(s=>s.id===scanId);
+        if(idx>=0) latest[idx] = {...latest[idx], direkap:true};
+        return latest;
+      });
     });
   }
 }
@@ -3932,9 +3980,14 @@ function attachHandlers(){
     const fd = new FormData(addStudentForm);
     const nama = fd.get('nama').trim(), nim = fd.get('nim').trim();
     if(!nama||!nim) return;
-    state.students.push({id:uid(), nama, nim});
+    const newSt = {id:uid(), nama, nim};
+    state.students.push(newSt);
     render();
-    saveStudents();
+    safeSaveArray('roster:'+keyBase(), 'students', latest=>{
+      if(!latest.some(s=>s.id===newSt.id)) latest.push(newSt);
+      latest.sort((a,b)=> String(a.nim).localeCompare(String(b.nim), undefined, {numeric:true}));
+      return latest;
+    });
   });
   const resetToSeedBtn = document.getElementById('resetToSeedBtn');
   if(resetToSeedBtn) resetToSeedBtn.addEventListener('click', ()=>{
@@ -3958,33 +4011,48 @@ function attachHandlers(){
     const raw = new FormData(importStudentForm).get('bulk') || '';
     const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
     let added = 0;
+    const newOnes = [];
     lines.forEach(line=>{
       const parts = line.split(/\t|,|;/).map(p=>p.trim()).filter(Boolean);
       if(parts.length<2) return;
       const nim = parts.find(p=>/^\d{6,}$/.test(p));
       const nama = parts.filter(p=>p!==nim).join(' ');
       if(!nim || !nama) return;
-      state.students.push({id:uid(), nama, nim});
+      const newSt = {id:uid(), nama, nim};
+      state.students.push(newSt);
+      newOnes.push(newSt);
       added++;
     });
     if(!added) alert('Tidak ada baris valid ditemukan. Pastikan format: Nama, NIM');
     render();
-    if(added) saveStudents();
+    if(added) safeSaveArray('roster:'+keyBase(), 'students', latest=>{
+      newOnes.forEach(s=>{ if(!latest.some(x=>x.id===s.id)) latest.push(s); });
+      latest.sort((a,b)=> String(a.nim).localeCompare(String(b.nim), undefined, {numeric:true}));
+      return latest;
+    });
   });
   document.querySelectorAll('[data-del-student]').forEach(b=> b.addEventListener('click', ()=>{
     if(!confirm('Hapus mahasiswa ini?')) return;
-    state.students = state.students.filter(s=>s.id!==b.dataset.delStudent);
+    const delId = b.dataset.delStudent;
+    state.students = state.students.filter(s=>s.id!==delId);
     render();
-    saveStudents();
+    safeSaveArray('roster:'+keyBase(), 'students', latest=> latest.filter(s=>s.id!==delId));
   }));
   document.querySelectorAll('[data-edit-student]').forEach(b=> b.addEventListener('click', ()=>{
     const st = state.students.find(s=>s.id===b.dataset.editStudent);
     if(!st) return;
     const nama = prompt('Nama:', st.nama); if(nama===null) return;
     const nim = prompt('NIM:', st.nim); if(nim===null) return;
-    st.nama = nama.trim()||st.nama; st.nim = nim.trim()||st.nim;
+    const editId = st.id;
+    const newNama = nama.trim()||st.nama, newNim = nim.trim()||st.nim;
+    st.nama = newNama; st.nim = newNim;
     render();
-    saveStudents();
+    safeSaveArray('roster:'+keyBase(), 'students', latest=>{
+      const idx = latest.findIndex(s=>s.id===editId);
+      if(idx>=0) latest[idx] = {...latest[idx], nama:newNama, nim:newNim};
+      latest.sort((a,b)=> String(a.nim).localeCompare(String(b.nim), undefined, {numeric:true}));
+      return latest;
+    });
   }));
 
   const addMatkulForm = document.getElementById('addMatkulForm');
@@ -3999,15 +4067,20 @@ function attachHandlers(){
     if(!nama || !jam || jam<=0) return;
     if(state.matkul.some(m=>m.nama.trim()===nama)){ alert('Mata kuliah dengan nama ini sudah ada di daftar.'); return; }
     if(submitBtn) submitBtn.disabled = true;
-    state.matkul.push({id:uid(), nama, jam, hari});
+    const newMk = {id:uid(), nama, jam, hari};
+    state.matkul.push(newMk);
     render();
-    saveMatkul();
+    safeSaveArray('matkul:'+keyBase(), 'matkul', latest=>{
+      if(!latest.some(m=>m.id===newMk.id)) latest.push(newMk);
+      return latest;
+    });
   });
   document.querySelectorAll('[data-del-matkul]').forEach(b=> b.addEventListener('click', ()=>{
     if(!confirm('Hapus mata kuliah ini?')) return;
-    state.matkul = state.matkul.filter(m=>m.id!==b.dataset.delMatkul);
+    const delId = b.dataset.delMatkul;
+    state.matkul = state.matkul.filter(m=>m.id!==delId);
     render();
-    saveMatkul();
+    safeSaveArray('matkul:'+keyBase(), 'matkul', latest=> latest.filter(m=>m.id!==delId));
   }));
   document.querySelectorAll('[data-edit-matkul]').forEach(b=> b.addEventListener('click', ()=>{
     const mk = state.matkul.find(m=>m.id===b.dataset.editMatkul);
@@ -4020,10 +4093,17 @@ function attachHandlers(){
       alert('Mata kuliah dengan nama ini sudah ada di daftar.');
       return;
     }
-    mk.nama = namaTrim || mk.nama;
-    if(!isNaN(jam) && jam>0) mk.jam = jam;
+    const editId = mk.id;
+    const newNama = namaTrim || mk.nama;
+    const newJam = (!isNaN(jam) && jam>0) ? jam : mk.jam;
+    mk.nama = newNama;
+    mk.jam = newJam;
     render();
-    saveMatkul();
+    safeSaveArray('matkul:'+keyBase(), 'matkul', latest=>{
+      const idx = latest.findIndex(m=>m.id===editId);
+      if(idx>=0) latest[idx] = {...latest[idx], nama:newNama, jam:newJam};
+      return latest;
+    });
   }));
   document.querySelectorAll('[data-toggle-hari]').forEach(chk=> chk.addEventListener('change', ()=>{
     const mk = state.matkul.find(m=>m.id===chk.dataset.toggleHari);
@@ -4035,7 +4115,13 @@ function attachHandlers(){
     } else {
       mk.hari = mk.hari.filter(h=>h!==day);
     }
-    saveMatkul();
+    const toggleId = mk.id;
+    const newHari = [...mk.hari];
+    safeSaveArray('matkul:'+keyBase(), 'matkul', latest=>{
+      const idx = latest.findIndex(m=>m.id===toggleId);
+      if(idx>=0) latest[idx] = {...latest[idx], hari:newHari};
+      return latest;
+    });
   }));
   const semesterStartInput = document.getElementById('semesterStartInput');
   if(semesterStartInput) semesterStartInput.addEventListener('change', ()=>{
@@ -4066,12 +4152,16 @@ function attachHandlers(){
         matkul: mk ? mk.nama : '(tidak diketahui)',
       };
       const driveUrl = await uploadImageToDrive(compressed, 'scan-' + tanggal + '-' + uid() + '.jpg', logInfo);
-      state.scans.push({ id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, dataUrl:driveUrl, uploadedAt:new Date().toISOString(), direkap:false });
+      const newScan = { id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, dataUrl:driveUrl, uploadedAt:new Date().toISOString(), direkap:false };
+      state.scans.push(newScan);
       // Tampilkan notifikasi (toast + titik merah lonceng) SEKARANG JUGA, tidak menunggu
       // siklus polling 5 detik -- lihat notifyLocalUploadSuccess().
       notifyLocalUploadSuccess({ ...logInfo, timestamp: new Date().toISOString() });
       render();
-      saveScans();
+      safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
+        if(!latest.some(s=>s.id===newScan.id)) latest.push(newScan);
+        return latest;
+      });
     }catch(err){
       alert('Gagal mengunggah gambar. Coba lagi.');
       submitBtn.disabled=false; submitBtn.textContent='↑ Upload Scan';
@@ -4084,7 +4174,8 @@ function attachHandlers(){
     state.scans = state.scans.filter(s=>s.id!==id);
     delete state.rekap[id];
     render();
-    saveScans(); saveRekap();
+    safeSaveArray('scans:'+keyBase(), 'scans', latest=> latest.filter(s=>s.id!==id));
+    safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{ delete latest[id]; return latest; });
   }));
   document.querySelectorAll('[data-view-image]').forEach(b=> b.addEventListener('click', ()=>{
     state.modal = { type:'image', id:b.dataset.viewImage };
@@ -4106,9 +4197,13 @@ function attachHandlers(){
     if(state.scans.some(s=>s.matkulId===matkulId && s.tanggal===tanggal)){
       if(!confirm('Sudah ada scan absensi untuk sesi ini. Tetap tandai sebagai "tidak ada kuliah"?')) return;
     }
-    state.libur.push({ id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, keterangan, markedAt:new Date().toISOString() });
+    const newLibur = { id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, keterangan, markedAt:new Date().toISOString() };
+    state.libur.push(newLibur);
     render();
-    saveLibur();
+    safeSaveArray('libur:'+keyBase(), 'libur', latest=>{
+      if(!latest.some(l=>l.id===newLibur.id)) latest.push(newLibur);
+      return latest;
+    });
   });
   document.querySelectorAll('[data-quick-libur]').forEach(b=> b.addEventListener('click', ()=>{
     const sel = document.getElementById('liburMatkulSelect');
@@ -4120,9 +4215,10 @@ function attachHandlers(){
   }));
   document.querySelectorAll('[data-del-libur]').forEach(b=> b.addEventListener('click', ()=>{
     if(!confirm('Batalkan tanda "tidak ada kuliah" untuk sesi ini? Sesi akan kembali dihitung normal (Alpa kalau belum ada scan).')) return;
-    state.libur = state.libur.filter(l=>l.id!==b.dataset.delLibur);
+    const delId = b.dataset.delLibur;
+    state.libur = state.libur.filter(l=>l.id!==delId);
     render();
-    saveLibur();
+    safeSaveArray('libur:'+keyBase(), 'libur', latest=> latest.filter(l=>l.id!==delId));
   }));
   document.querySelectorAll('[data-open-rekap]').forEach(b=> b.addEventListener('click', ()=>{
     if(state.role!=='admin') return; // hanya Admin yang boleh mengisi/mengubah rekap

@@ -265,11 +265,20 @@
   }
   /* Kontrol zoom untuk foto scan absensi (modal "Lihat scan" & "Isi Rekap") -- supaya
      tulisan tangan di lembar absensi bisa diperbesar saat perlu dibaca lebih jelas. */
-  .img-zoom-controls{ display:flex; align-items:center; gap:4px; margin-bottom:8px; }
+  .img-zoom-controls{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin-bottom:8px; }
   .img-zoom-controls .zoom-label{ font-size:12px; min-width:42px; text-align:center; }
+  .img-zoom-controls .img-zoom-hint{ flex:1 1 100%; margin:2px 0 0 !important; }
+  /* PENTING (fix bug "tidak bisa di-scroll ke bawah" di HP): sebelumnya elemen ini diberi
+     touch-action:pinch-zoom, yang di browser mobile artinya SATU jari tidak boleh dipakai
+     untuk geser/scroll sama sekali di area ini -- hanya gestur pinch (2 jari) yang diizinkan.
+     Karena foto scan biasanya memenuhi hampir seluruh layar HP, akibatnya jari pengguna
+     "terkunci" begitu menyentuh foto dan tidak bisa lagi swipe ke bawah untuk mencapai
+     form isi rekap di bawahnya. pan-x/pan-y mengembalikan kemampuan swipe/geser normal
+     (baik untuk scroll ke bawah maupun geser saat foto di-zoom), sementara pinch-zoom tetap
+     dipertahankan supaya cubit 2 jari untuk memperbesar foto tetap berfungsi.  */
   .img-zoom-viewport{
     overflow:auto; max-height:78vh; border:1px solid var(--line-strong); border-radius:8px;
-    background:#f3f3f3; touch-action:pinch-zoom;
+    background:#f3f3f3; touch-action:pan-x pan-y pinch-zoom; -webkit-overflow-scrolling:touch;
   }
   .img-zoom-target{ display:block; cursor:zoom-in; border-radius:6px; transition:transform .15s ease; }
   .excel-table--fit thead th{ padding:4px 3px; font-size:10px; text-align:center; vertical-align:middle; white-space:normal; word-break:break-word; }
@@ -403,6 +412,17 @@
   @media (max-width:640px){
     .panel{padding:18px;}
     .topbar-inner{flex-direction:column; align-items:flex-start;}
+    /* Modal (termasuk "Isi Rekap") dibuat lebih ramah HP: overlay tidak memakan banyak
+       ruang, foto scan tidak memenuhi hampir seluruh layar (supaya form di bawahnya
+       lebih cepat terlihat/tercapai), dan tombol status S/I/A/H tetap nyaman disentuh
+       jari tanpa memaksa modal melebar ke samping. */
+    .modal-overlay{ padding:8px; align-items:flex-start; }
+    .modal{ max-height:96vh; border-radius:10px; margin-top:8px; }
+    .modal-head{ padding:14px 14px; }
+    .modal-body{ padding:14px; }
+    .img-zoom-viewport{ max-height:48vh; }
+    .status-group{ gap:3px; }
+    .status-opt span{ min-width:36px; padding:6px 5px; font-size:10.5px; }
   }
 </style>
 </head>
@@ -3777,7 +3797,7 @@ function renderZoomableImage(dataUrl, alt, uid){
       <span style="width:1px; align-self:stretch; background:var(--line-strong); margin:0 2px;"></span>
       <button type="button" class="btn btn-ghost btn-sm" data-img-rotate-left="${uid}" title="Putar 90&deg; kiri" style="padding:4px 10px;">&#8634;</button>
       <button type="button" class="btn btn-ghost btn-sm" data-img-rotate-right="${uid}" title="Putar 90&deg; kanan" style="padding:4px 10px;">&#8635;</button>
-      <span class="note" style="margin:0 0 0 4px;">Cubit (pinch) atau klik dobel foto untuk zoom</span>
+      <span class="note img-zoom-hint">Cubit (pinch) atau klik dobel foto untuk zoom</span>
     </div>
     <div class="img-zoom-viewport" id="imgZoomViewport_${uid}">
       <img class="img-zoom-target" id="imgZoomTarget_${uid}" src="${dataUrl}" alt="${escapeHtml(alt)}" style="width:${Math.round(z*100)}%; max-width:none; transform:rotate(${rot}deg);">
@@ -3945,10 +3965,12 @@ function renderModal(){
             <div id="imgZoomWrap_rekap_${sc.id}">${renderZoomableImage(sc.dataUrl, 'Scan absensi', 'rekap_'+sc.id)}</div>
             ${state.students.length ? `
             <form id="rekapForm">
-              <table>
-                <thead><tr><th style="width:34px;">No</th><th>Nama</th><th>NIM</th><th style="width:190px;">Status</th></tr></thead>
-                <tbody>${rows}</tbody>
-              </table>
+              <div class="excel-table-scroll">
+                <table>
+                  <thead><tr><th style="width:34px;">No</th><th>Nama</th><th>NIM</th><th style="width:190px;">Status</th></tr></thead>
+                  <tbody>${rows}</tbody>
+                </table>
+              </div>
               <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
                 <button type="button" class="btn btn-ghost" data-close-modal="1">Batal</button>
                 <button type="submit" class="btn btn-primary">Simpan Rekap</button>

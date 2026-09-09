@@ -2567,6 +2567,7 @@ let state = {
   modal: null, // { type:'image', url } | { type:'rekap', scan }
   summaryMatkulId: null,
   summaryWeek: 1,
+  scanListWeek: null, // minggu yang sedang ditampilkan di "Daftar Scan" (null = belum diset, default ke minggu berjalan)
   rekapZoom: 1, // level zoom tabel "Rekap Absensi per Minggu" (1 = 100%, di-reset tiap reload halaman)
   semesterStart: null, // 'YYYY-MM-DD', tanggal Senin minggu pertama semester (per kelas)
   notifications: [], // riwayat notifikasi upload untuk Admin: {id, prodi, kelas, matkul, tanggalKuliah, timestamp, read}
@@ -3455,7 +3456,41 @@ function renderRekap(){
     <div class="stat-box"><div class="num">${missingCount}</div><div class="lab">Belum Diupload (otomatis Alpa)</div></div>
   </div>`;
 
-  const sorted = [...state.scans].sort((a,b)=> b.tanggal.localeCompare(a.tanggal));
+  const sortedAll = [...state.scans].sort((a,b)=> b.tanggal.localeCompare(a.tanggal));
+
+  // Daftar Scan difilter PER MINGGU (default: minggu berjalan) supaya daftarnya tidak
+  // makin panjang & bikin scroll makin jauh setiap hari ada upload baru -- sebelumnya
+  // SEMUA scan dari awal semester ditumpuk jadi satu tabel panjang. Kalau Tanggal Mulai
+  // Semester belum diatur, filter minggu ini tidak bisa dihitung -> tampilkan semua
+  // seperti sebelumnya (fallback).
+  const curWeekForList = state.semesterStart ? (weekIndexForDate(todayStr(), state.semesterStart) || 1) : null;
+  if(state.semesterStart){
+    if(!state.scanListWeek || state.scanListWeek<1 || state.scanListWeek>TOTAL_WEEKS){
+      state.scanListWeek = Math.min(Math.max(curWeekForList,1), TOTAL_WEEKS);
+    }
+  }
+  const scanListWeek = state.scanListWeek || 1;
+  let sorted = sortedAll;
+  let weekNavHtml = '';
+  if(state.semesterStart){
+    const monday = weekMondayOf(scanListWeek, state.semesterStart);
+    const saturday = addDaysDate(monday, 5);
+    const mondayISO = toISO(monday), saturdayISO = toISO(saturday);
+    sorted = sortedAll.filter(sc=> sc.tanggal>=mondayISO && sc.tanggal<=saturdayISO);
+    const scanListWeekOptions = Array.from({length:TOTAL_WEEKS}, (_,i)=>i+1).map(w=>{
+      const mon = weekMondayOf(w, state.semesterStart);
+      const sat = addDaysDate(mon,5);
+      return `<option value="${w}" ${w===scanListWeek?'selected':''}>Minggu ${w} (${fmtDDMMYYYY(mon)} &ndash; ${fmtDDMMYYYY(sat)})</option>`;
+    }).join('');
+    weekNavHtml = `
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0 4px;">
+      <button class="btn btn-ghost btn-sm" id="scanListWeekPrev" title="Minggu sebelumnya">&larr; Minggu sebelumnya</button>
+      <select id="scanListWeekSelect" style="flex:1 1 220px; min-width:180px;">${scanListWeekOptions}</select>
+      <button class="btn btn-ghost btn-sm" id="scanListWeekNext" title="Minggu berikutnya">Minggu berikutnya &rarr;</button>
+      ${scanListWeek!==curWeekForList ? `<button class="btn btn-ghost btn-sm" id="scanListWeekToday">Minggu berjalan</button>` : ''}
+    </div>`;
+  }
+
   const listRows = sorted.map(sc=>`
     <tr>
       <td>${formatDate(sc.tanggal)}</td>
@@ -3472,7 +3507,9 @@ function renderRekap(){
     <div class="panel-head">
       <div><h2>Daftar Scan &mdash; Kelas ${state.kelas}</h2><p>${state.role==='admin' ? 'Klik "Isi rekap" untuk mencatat kehadiran berdasarkan scan.' : 'Status rekap kehadiran per pertemuan.'}</p></div>
     </div>
-    ${total ? `<table><thead><tr><th>Tanggal</th><th>Mata Kuliah</th><th>Status</th><th style="width:220px;">Aksi</th></tr></thead><tbody>${listRows}</tbody></table>` :
+    ${weekNavHtml}
+    ${sorted.length ? `<table><thead><tr><th>Tanggal</th><th>Mata Kuliah</th><th>Status</th><th style="width:220px;">Aksi</th></tr></thead><tbody>${listRows}</tbody></table>` :
+      total ? `<div class="empty-state"><div class="glyph">&#128203;</div><h3>Tidak ada scan di minggu ini</h3><p>Pilih minggu lain lewat dropdown di atas untuk melihat riwayat scan minggu tersebut.</p></div>` :
       `<div class="empty-state"><div class="glyph">&#128203;</div><h3>Belum ada scan</h3><p>Rekap akan muncul setelah ketua kelas mengunggah scan absensi.</p></div>`}
   </div>`;
 
@@ -4307,6 +4344,28 @@ function attachHandlers(){
   const summaryWeekSelect = document.getElementById('summaryWeekSelect');
   if(summaryWeekSelect) summaryWeekSelect.addEventListener('change', ()=>{
     state.summaryWeek = parseInt(summaryWeekSelect.value,10);
+    render();
+  });
+  // Navigasi minggu untuk panel "Daftar Scan" (lihat riwayat upload per minggu, default
+  // minggu berjalan) -- lihat renderRekap().
+  const scanListWeekSelect = document.getElementById('scanListWeekSelect');
+  if(scanListWeekSelect) scanListWeekSelect.addEventListener('change', ()=>{
+    state.scanListWeek = parseInt(scanListWeekSelect.value,10);
+    render();
+  });
+  const scanListWeekPrev = document.getElementById('scanListWeekPrev');
+  if(scanListWeekPrev) scanListWeekPrev.addEventListener('click', ()=>{
+    state.scanListWeek = Math.max(1, (state.scanListWeek||1)-1);
+    render();
+  });
+  const scanListWeekNext = document.getElementById('scanListWeekNext');
+  if(scanListWeekNext) scanListWeekNext.addEventListener('click', ()=>{
+    state.scanListWeek = Math.min(TOTAL_WEEKS, (state.scanListWeek||1)+1);
+    render();
+  });
+  const scanListWeekToday = document.getElementById('scanListWeekToday');
+  if(scanListWeekToday) scanListWeekToday.addEventListener('click', ()=>{
+    state.scanListWeek = state.semesterStart ? (weekIndexForDate(todayStr(), state.semesterStart) || 1) : 1;
     render();
   });
   const exportExcelBtn = document.getElementById('exportExcelBtn');

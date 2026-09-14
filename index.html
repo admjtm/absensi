@@ -2564,6 +2564,11 @@ let state = {
   libur: [],   // {id, matkulId, matkulNama, tanggal, keterangan, markedAt} -- sesi yang ditandai
                // TIDAK ADA KULIAH (mis. dosen tidak masuk) sehingga dikecualikan dari Alpa otomatis
   loading: true,
+  refreshing: false, // true = data cache lokal sudah tampil, tapi versi TERBARU dari server masih
+                      // diambil di belakang layar -- dipakai supaya UI bisa kasih tahu pengguna
+                      // kalau status rekap yang tampil sekarang mungkin masih akan diperbarui
+                      // sebentar lagi (bukan tampilan final), bukannya diam-diam menampilkan Alpa
+                      // yang keliru tanpa keterangan apa-apa.
   modal: null, // { type:'image', url } | { type:'rekap', scan }
   summaryMatkulId: null,
   summaryWeek: 1,
@@ -2612,8 +2617,10 @@ async function loadClass(){
     state.libur = cached.libur || [];
     state.semesterStart = cached.semesterStart || DEFAULT_SEMESTER_START;
     state.loading = false;
+    state.refreshing = true; // data yang tampil sekarang masih dari cache lokal, belum tentu terbaru
   } else {
     state.loading = true;
+    state.refreshing = false;
   }
   render();
   const [rosterRes, matkulRes, scansRes, rekapRes, semStartRes, liburRes] = await batchGetClassData_(base);
@@ -2721,6 +2728,7 @@ async function loadClass(){
   // kalau semStartRes.error: biarkan nilai yang sudah ada (dari cache di atas) apa adanya.
 
   state.loading = false;
+  state.refreshing = false; // data terbaru (atau setidaknya percobaan mengambilnya) sudah selesai diproses
   saveCachedClass(base);
   render();
 }
@@ -2735,7 +2743,12 @@ async function loadClass(){
 async function batchGetClassData_(base){
   const keys = ['roster:'+base, 'matkul:'+base, 'scans:'+base, 'rekap:'+base, 'semesterStart:'+base, 'libur:'+base];
   try{
-    const res = await fetch(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')));
+    // cache:'no-store' -- WAJIB, supaya browser tidak diam-diam menyajikan respons GET yang
+    // sudah di-cache (basi) untuk URL yang persis sama ini. Tanpa ini, setelah admin mengisi
+    // rekap, perangkat yang sama (atau tab lain) bisa saja menerima balikan cache lama yang
+    // belum ada rekapnya -- inilah salah satu sebab status kehadiran sempat tampil "Alpa semua"
+    // padahal sudah direkap, sampai cache browser itu akhirnya kedaluwarsa.
+    const res = await fetch(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')), { cache:'no-store' });
     const r = await res.json();
     if(r && r.values){
       const parse = (k)=>{
@@ -2761,7 +2774,9 @@ async function batchGetClassData_(base){
 }
 async function safeGetRaw(key){
   try{
-    const res = await fetch(SHEETS_API_URL + '?key=' + encodeURIComponent(key));
+    // cache:'no-store' -- lihat catatan di batchGetClassData_ di atas: tanpa ini, hasil GET
+    // untuk key yang sama bisa disajikan dari cache browser yang sudah basi.
+    const res = await fetch(SHEETS_API_URL + '?key=' + encodeURIComponent(key), { cache:'no-store' });
     const r = await res.json();
     if(r && r.found && r.value) return { found:true, value: JSON.parse(r.value), error:false };
     return { found:false, value:null, error:false };
@@ -3052,6 +3067,11 @@ function render(){
   app.innerHTML = `
     ${renderSelector()}
     ${renderTabnav()}
+    ${state.refreshing ? `
+      <div class="panel" style="padding:10px 16px; margin-bottom:14px; display:flex; align-items:center; gap:10px; border-left:3px solid var(--accent);">
+        <span class="mono" style="font-size:16px; line-height:1;">&#8635;</span>
+        <span style="font-size:12.5px; color:var(--ink-soft);">Menyegarkan data terbaru dari server&hellip; status kehadiran/rekap di bawah ini bisa berubah sebentar lagi kalau ada rekapan yang baru masuk dari perangkat lain.</span>
+      </div>` : ''}
     ${state.loading ? '<div class="panel"><div class="empty-state"><div class="glyph">&#9203;</div><p>Memuat data kelas&hellip;</p></div></div>' : renderTabContent()}
   `;
   attachHandlers();

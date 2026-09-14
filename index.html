@@ -350,6 +350,15 @@
   }
   .stamp-done{color:var(--success);}
   .stamp-pending{color:var(--accent-ink);}
+  .stamp-danger{color:var(--danger);}
+
+  /* ---------- Badge "berkas tidak sesuai" (salah matkul) ---------- */
+  .flag-note{
+    margin-top:6px; padding:7px 9px; border-radius:7px;
+    background:#FBEAE7; border:1px solid var(--danger); color:var(--danger);
+    font-size:11px; line-height:1.4;
+  }
+  .flag-note strong{display:block; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;}
 
   /* ---------- Status radio "stamps" ---------- */
   .status-group{display:flex; gap:4px;}
@@ -3543,9 +3552,11 @@ function renderUpload(){
       <div class="scan-meta">
         <p class="mk">${escapeHtml(sc.matkulNama)}</p>
         <p class="dt">${formatDate(sc.tanggal)}</p>
-        <span class="stamp ${sc.direkap?'stamp-done':'stamp-pending'}">${sc.direkap?'Sudah direkap':'Belum direkap'}</span>
+        <span class="stamp ${sc.flagSalah?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending')}">${sc.flagSalah?'Berkas tidak sesuai':(sc.direkap?'Sudah direkap':'Belum direkap')}</span>
+        ${sc.flagSalah ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(sc.flagNote||'Berkas yang diunggah tidak sesuai dengan mata kuliah ini.')}</div>` : ''}
         <div class="scan-actions" style="margin-top:8px;">
           <button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat</button>
+          ${state.role==='admin' ? `<button class="btn ${sc.flagSalah?'btn-ghost':'btn-danger-ghost'} btn-sm" data-flag-scan="${sc.id}">${sc.flagSalah?'Batalkan tanda':'Tandai salah matkul'}</button>` : ''}
           ${state.role==='admin' ? `<button class="btn btn-danger-ghost btn-sm" data-del-scan="${sc.id}">Hapus</button>` : ''}
         </div>
       </div>
@@ -3625,10 +3636,14 @@ function renderRekap(){
     <tr>
       <td>${formatDate(sc.tanggal)}</td>
       <td>${escapeHtml(sc.matkulNama)}</td>
-      <td><span class="stamp ${sc.direkap?'stamp-done':'stamp-pending'}">${sc.direkap?'Sudah':'Belum'}</span></td>
+      <td>
+        <span class="stamp ${sc.flagSalah?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending')}">${sc.flagSalah?'Berkas tidak sesuai':(sc.direkap?'Sudah':'Belum')}</span>
+        ${sc.flagSalah ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(sc.flagNote||'Berkas yang diunggah tidak sesuai dengan mata kuliah ini.')}</div>` : ''}
+      </td>
       <td>
         <button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat scan</button>
         ${state.role==='admin' ? `<button class="btn btn-primary btn-sm" data-open-rekap="${sc.id}">${sc.direkap?'Edit rekap':'Isi rekap'}</button>` : ''}
+        ${state.role==='admin' ? `<button class="btn ${sc.flagSalah?'btn-ghost':'btn-danger-ghost'} btn-sm" data-flag-scan="${sc.id}">${sc.flagSalah?'Batalkan tanda':'Tandai salah matkul'}</button>` : ''}
       </td>
     </tr>`).join('');
 
@@ -3638,7 +3653,7 @@ function renderRekap(){
       <div><h2>Daftar Scan &mdash; Kelas ${state.kelas}</h2><p>${state.role==='admin' ? 'Klik "Isi rekap" untuk mencatat kehadiran berdasarkan scan.' : 'Status rekap kehadiran per pertemuan.'}</p></div>
     </div>
     ${weekNavHtml}
-    ${sorted.length ? `<table><thead><tr><th>Tanggal</th><th>Mata Kuliah</th><th>Status</th><th style="width:220px;">Aksi</th></tr></thead><tbody>${listRows}</tbody></table>` :
+    ${sorted.length ? `<table><thead><tr><th>Tanggal</th><th>Mata Kuliah</th><th style="width:200px;">Status</th><th style="width:260px;">Aksi</th></tr></thead><tbody>${listRows}</tbody></table>` :
       total ? `<div class="empty-state"><div class="glyph">&#128203;</div><h3>Tidak ada scan di minggu ini</h3><p>Pilih minggu lain lewat dropdown di atas untuk melihat riwayat scan minggu tersebut.</p></div>` :
       `<div class="empty-state"><div class="glyph">&#128203;</div><h3>Belum ada scan</h3><p>Rekap akan muncul setelah ketua kelas mengunggah scan absensi.</p></div>`}
   </div>`;
@@ -4478,7 +4493,7 @@ function attachHandlers(){
         matkul: mk ? mk.nama : '(tidak diketahui)',
       };
       const driveUrl = await uploadImageToDrive(compressed, 'scan-' + tanggal + '-' + uid() + '.jpg', logInfo);
-      const newScan = { id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, dataUrl:driveUrl, uploadedAt:new Date().toISOString(), direkap:false };
+      const newScan = { id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, dataUrl:driveUrl, uploadedAt:new Date().toISOString(), direkap:false, flagSalah:false, flagNote:'' };
       state.scans.push(newScan);
       // Tampilkan notifikasi (toast + titik merah lonceng) SEKARANG JUGA, tidak menunggu
       // siklus polling 5 detik -- lihat notifyLocalUploadSuccess().
@@ -4502,6 +4517,32 @@ function attachHandlers(){
     render();
     safeSaveArray('scans:'+keyBase(), 'scans', latest=> latest.filter(s=>s.id!==id));
     safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{ delete latest[id]; return latest; });
+  }));
+  // Admin menandai scan yang berkasnya SALAH (mis. discan/diupload di menu mata kuliah
+  // yang keliru) -- supaya Ketua Kelas tahu KENAPA status mahasiswa masih Alfa: bukan
+  // karena belum diisi rekap, tapi karena berkas yang diunggah tidak sesuai dan perlu
+  // diupload ulang di mata kuliah yang benar.
+  document.querySelectorAll('[data-flag-scan]').forEach(b=> b.addEventListener('click', ()=>{
+    if(state.role!=='admin') return; // hanya Admin yang boleh menandai
+    const id = b.dataset.flagScan;
+    const sc = state.scans.find(s=>s.id===id);
+    if(!sc) return;
+    if(sc.flagSalah){
+      if(!confirm('Batalkan tanda "berkas tidak sesuai" untuk scan ini?')) return;
+      sc.flagSalah = false; sc.flagNote = '';
+    } else {
+      const defaultNote = 'Berkas yang diunggah tidak sesuai dengan mata kuliah ini. Mohon upload ulang di mata kuliah yang benar.';
+      const note = prompt('Tulis keterangan untuk Ketua Kelas (kenapa berkas ini tidak sesuai):', defaultNote);
+      if(note===null) return; // dibatalkan
+      sc.flagSalah = true; sc.flagNote = note.trim() || defaultNote;
+    }
+    const flagId = id, flagVal = sc.flagSalah, flagNoteVal = sc.flagNote;
+    render();
+    safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
+      const idx = latest.findIndex(s=>s.id===flagId);
+      if(idx>=0) latest[idx] = {...latest[idx], flagSalah:flagVal, flagNote:flagNoteVal};
+      return latest;
+    });
   }));
   document.querySelectorAll('[data-view-image]').forEach(b=> b.addEventListener('click', ()=>{
     state.modal = { type:'image', id:b.dataset.viewImage };

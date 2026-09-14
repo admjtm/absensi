@@ -4174,7 +4174,7 @@ function renderModal(){
         });
       });
     });
-    rekapForm.addEventListener('submit', (e)=>{
+    rekapForm.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const scanId = state.modal.id;
       const result = {};
@@ -4191,12 +4191,33 @@ function renderModal(){
       state.rekapDirtyAt = Date.now(); // tandai: ada edit lokal, lihat penjelasan di loadClass()
       state.modal = null;
       render();
-      safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{ latest[scanId] = result; return latest; });
-      safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
-        const idx = latest.findIndex(s=>s.id===scanId);
-        if(idx>=0) latest[idx] = {...latest[idx], direkap:true};
-        return latest;
-      });
+
+      // Sama seperti "Tandai Hadir Semua": TUNGGU hasil simpan, lalu verifikasi ke server,
+      // supaya kalau ternyata gagal tersimpan (mis. baris yang sengaja diubah ke Alpa/Izin/Sakit
+      // tidak nyangkut), admin langsung tahu SAAT ITU JUGA -- bukan baru sadar nanti setelah
+      // reload dan datanya sudah balik seperti semula.
+      const [rekapSaveResult, scansSaveResult] = await Promise.all([
+        safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{ latest[scanId] = result; return latest; }),
+        safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
+          const idx = latest.findIndex(s=>s.id===scanId);
+          if(idx>=0) latest[idx] = {...latest[idx], direkap:true};
+          return latest;
+        }),
+      ]);
+
+      const gagalSimpan = !rekapSaveResult || !rekapSaveResult.ok || !scansSaveResult || !scansSaveResult.ok;
+      if(gagalSimpan){
+        const detail = [rekapSaveResult, scansSaveResult].filter(r=>r && !r.ok).map(r=>r.error).join('; ');
+        alert(`⚠️ RIWAYAT KEHADIRAN INI TIDAK TERSIMPAN KE SERVER!\n\nDi layar tab ini sudah berubah, tapi gagal disimpan permanen ke Google Sheets (${detail || 'sebab tidak diketahui'}).\n\nKalau halaman di-reload, perubahan barusan akan HILANG (kembali ke data lama). Coba simpan ulang sesaat lagi lewat "Edit rekap" pada sesi ini.`);
+        return;
+      }
+      try{
+        const cek = await safeGetRaw('rekap:'+keyBase());
+        const cocok = cek.found && cek.value && cek.value[scanId] && Object.keys(result).every(sid=> cek.value[scanId][sid]===result[sid]);
+        if(!cocok){
+          alert('Server merespons OK, tapi saat dicek ulang datanya belum sepenuhnya cocok. Buka lagi "Edit rekap" pada sesi ini sesaat lagi untuk memastikan tersimpan dengan benar.');
+        }
+      }catch(e2){ /* verifikasi gagal diambil, tidak fatal -- data sudah dianggap tersimpan dari respons HTTP OK di atas */ }
     });
   }
 }

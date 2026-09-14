@@ -2581,6 +2581,19 @@ let state = {
   notifications: [], // riwayat notifikasi upload untuk Admin: {id, prodi, kelas, matkul, tanggalKuliah, timestamp, read}
   notifPanelOpen: false,
   notifError: null, // pesan error terakhir (kalau ada) saat mengambil notifikasi dari server -- ditampilkan di panel lonceng supaya kelihatan tanpa perlu buka console
+  rekapDirtyAt: 0, // timestamp (ms) terakhir kali rekap/scans diedit LOKAL di perangkat ini
+                   // (simpan per-sesi lewat "Simpan Rekap", atau "Tandai Hadir Semua"). Dipakai
+                   // loadClass() untuk mencegah BUG BALAPAN: kalau admin sempat mengedit rekap
+                   // SAAT pengambilan data awal (loadClass) dari server masih berjalan di
+                   // belakang layar (Google Apps Script bisa lambat, beberapa detik), begitu
+                   // pengambilan itu akhirnya selesai ia dulu MENIMPA edit yang baru saja
+                   // dilakukan dengan data server yang masih LAMA (belum termasuk edit
+                   // tsb) -- inilah salah satu sebab rekap yang "sudah diisi Hadir" tiba-tiba
+                   // balik lagi jadi Alpa tanpa sebab yang kelihatan.
+  lastBulkHadir: null, // snapshot AKSI "Tandai Hadir Semua" TERAKHIR (per kelas ini saja), supaya
+                       // bisa di-"Urungkan" -- { week, scanIds, prevRekap:{scanId:objAtauNull},
+                       // prevDirekap:{scanId:boolean} }. null kalau belum ada aksi yang bisa
+                       // diurungkan (atau sudah pernah diurungkan / kelas berpindah).
 };
 
 function currentProdi(){ return PRODI.find(p=>p.key===state.prodi); }
@@ -2608,6 +2621,8 @@ function saveCachedClass(base){
 
 async function loadClass(){
   const base = keyBase();
+  const fetchStartedAt = Date.now(); // dicatat SEBELUM request ke server -- lihat pemakaiannya di bawah
+  state.lastBulkHadir = null; // snapshot "Tandai Hadir Semua" cuma berlaku untuk kelas yang sama, buang saat pindah/buka kelas
   const cached = loadCachedClass(base);
   if(cached){
     // Tampilkan dulu data terakhir yang tersimpan di browser ini supaya kelas langsung
@@ -2717,8 +2732,13 @@ async function loadClass(){
   }
 
   // --- Scans, rekap, libur: kalau gagal ambil, jangan timpa data yang sudah tampil ---
-  if(!scansRes.error) state.scans = scansRes.value || [];
-  if(!rekapRes.error) state.rekap = rekapRes.value || {};
+  // PENGAMAN BALAPAN: kalau ADA edit rekap/scans LOKAL yang terjadi SETELAH request ini
+  // mulai (state.rekapDirtyAt > fetchStartedAt), data dari server di sini sudah PASTI lebih
+  // lama daripada edit tsb -- jangan ditimpa, biarkan hasil edit lokal (yang juga sedang
+  // disimpan sendiri ke server lewat safeSaveObject/safeSaveArray) tetap dipakai.
+  const adaEditLokalSetelahFetch = state.rekapDirtyAt > fetchStartedAt;
+  if(!scansRes.error && !adaEditLokalSetelahFetch) state.scans = scansRes.value || [];
+  if(!rekapRes.error && !adaEditLokalSetelahFetch) state.rekap = rekapRes.value || {};
   if(!liburRes.error) state.libur = liburRes.value || [];
 
   if(semStartRes.value){
@@ -3864,6 +3884,7 @@ function renderWeeklyRecap(){
     <div style="margin-bottom:14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
       <button class="btn btn-ghost btn-sm" id="exportWeekExcelBtn" ${!state.students.length ? 'disabled' : ''}>&#8595; Download Excel (Minggu ${week} ini)</button>
       ${state.role==='admin' ? `<button class="btn btn-primary btn-sm" id="bulkMarkWeekHadirBtn" ${!state.students.length ? 'disabled' : ''}>&#10003; Tandai Hadir Semua (Minggu ${week} ini)</button>` : ''}
+      ${state.role==='admin' && state.lastBulkHadir && state.lastBulkHadir.week===week ? `<button class="btn btn-ghost btn-sm" id="undoBulkMarkWeekHadirBtn" style="color:var(--danger); border-color:var(--danger);">&#8617; Urungkan Tandai Hadir Semua</button>` : ''}
       <div style="display:flex; align-items:center; gap:4px; border:1px solid var(--line-strong); border-radius:8px; padding:2px;">
         <button class="btn btn-ghost btn-sm" id="rekapZoomOut" title="Perkecil tampilan tabel" style="padding:4px 10px;">&minus;</button>
         <span class="mono" id="rekapZoomLabel" style="font-size:12px; min-width:42px; text-align:center;">${Math.round((state.rekapZoom||1)*100)}%</span>
@@ -4152,6 +4173,7 @@ function renderModal(){
       state.rekap[scanId] = result;
       const scan = state.scans.find(s=>s.id===scanId);
       if(scan) scan.direkap = true;
+      state.rekapDirtyAt = Date.now(); // tandai: ada edit lokal, lihat penjelasan di loadClass()
       state.modal = null;
       render();
       safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{ latest[scanId] = result; return latest; });
@@ -4490,6 +4512,8 @@ function attachHandlers(){
   if(exportWeekExcelBtn) exportWeekExcelBtn.addEventListener('click', exportWeeklyExcelOne_);
   const bulkMarkWeekHadirBtn = document.getElementById('bulkMarkWeekHadirBtn');
   if(bulkMarkWeekHadirBtn) bulkMarkWeekHadirBtn.addEventListener('click', ()=> bulkMarkWeekHadir(state.summaryWeek));
+  const undoBulkMarkWeekHadirBtn = document.getElementById('undoBulkMarkWeekHadirBtn');
+  if(undoBulkMarkWeekHadirBtn) undoBulkMarkWeekHadirBtn.addEventListener('click', undoBulkMarkWeekHadir);
   // Kontrol zoom tabel Rekap Mingguan: perbesar/perkecil tampilan (min 60%, max 200%),
   // supaya angka S/I/A yang kecil-kecil bisa dibaca lebih jelas saat perlu, tanpa mengubah
   // ukuran default tabel (yang sengaja dibuat kompak supaya muat 1 layar).
@@ -4677,37 +4701,100 @@ function cumulativeSIA(uptoDate, matkulId, studentId){
 // "Edit rekap" per sesi seperti biasa -- tombol ini cuma titik awal cepat, bukan pengganti
 // permanen kalau memang ada yang tidak hadir.
 function bulkMarkWeekHadir(week){
-  if(!state.semesterStart){ alert('Atur Tanggal Mulai Semester dulu di tab Mata Kuliah.'); return; }
-  if(!state.students.length){ alert('Belum ada data mahasiswa di kelas ini.'); return; }
-  week = week || state.summaryWeek || 1;
-  const monday = weekMondayOf(week, state.semesterStart);
-  const saturday = addDaysDate(monday, 5);
-  const mondayISO = toISO(monday), saturdayISO = toISO(saturday);
-  const scansInWeek = state.scans.filter(s=> s.tanggal>=mondayISO && s.tanggal<=saturdayISO);
-  if(!scansInWeek.length){ alert('Belum ada scan/sesi yang diupload untuk minggu ini, jadi tidak ada yang bisa ditandai.'); return; }
+  try{
+    if(!state.semesterStart){ alert('Atur Tanggal Mulai Semester dulu di tab Mata Kuliah.'); return; }
+    if(!state.students.length){ alert('Belum ada data mahasiswa di kelas ini.'); return; }
+    week = week || state.summaryWeek || 1;
+    const monday = weekMondayOf(week, state.semesterStart);
+    const saturday = addDaysDate(monday, 5);
+    const mondayISO = toISO(monday), saturdayISO = toISO(saturday);
+    const scansInWeek = state.scans.filter(s=> s.tanggal>=mondayISO && s.tanggal<=saturdayISO);
+    if(!scansInWeek.length){ alert('Belum ada scan/sesi yang diupload untuk minggu ini, jadi tidak ada yang bisa ditandai.'); return; }
 
-  const ok = confirm(`Tandai HADIR untuk SEMUA ${state.students.length} mahasiswa, di ${scansInWeek.length} sesi (mata kuliah) minggu ${week} ini?\n\nKalau ada mahasiswa yang sebenarnya izin/sakit/alpa di minggu ini, buka "Edit rekap" pada sesi terkait sesudahnya untuk mengoreksi baris mahasiswa itu saja.`);
-  if(!ok) return;
+    const ok = confirm(`Tandai HADIR untuk SEMUA ${state.students.length} mahasiswa, di ${scansInWeek.length} sesi (mata kuliah) minggu ${week} ini?\n\nKalau ada mahasiswa yang sebenarnya izin/sakit/alpa di minggu ini, buka "Edit rekap" pada sesi terkait sesudahnya untuk mengoreksi baris mahasiswa itu saja.`);
+    if(!ok) return;
 
-  const hadirSemua = {};
-  state.students.forEach(st=>{ hadirSemua[st.id] = 'H'; });
+    const hadirSemua = {};
+    state.students.forEach(st=>{ hadirSemua[st.id] = 'H'; });
 
-  // Update optimistis di memori dulu supaya tabel langsung berubah, baru menyusul disimpan
-  // ke server (berbasis data TERBARU, sama seperti alur simpan rekap per-sesi biasa, supaya
-  // tidak menimpa perubahan device lain).
-  const scanIds = scansInWeek.map(s=>s.id);
-  scanIds.forEach(id=>{ state.rekap[id] = { ...hadirSemua }; });
-  state.scans.forEach(s=>{ if(scanIds.includes(s.id)) s.direkap = true; });
-  render();
+    // Update optimistis di memori dulu supaya tabel langsung berubah, baru menyusul disimpan
+    // ke server (berbasis data TERBARU, sama seperti alur simpan rekap per-sesi biasa, supaya
+    // tidak menimpa perubahan device lain).
+    const scanIds = scansInWeek.map(s=>s.id);
 
-  safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{
-    scanIds.forEach(id=>{ latest[id] = { ...hadirSemua }; });
-    return latest;
-  });
-  safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
-    latest.forEach(s=>{ if(scanIds.includes(s.id)) s.direkap = true; });
-    return latest;
-  });
+    // Simpan snapshot KONDISI SEBELUM ditimpa (rekap lama + status direkap lama per sesi),
+    // supaya aksi ini bisa "Diurungkan" (undo) kalau ternyata salah pencet atau ternyata
+    // ada mahasiswa yang sebenarnya tidak hadir minggu ini.
+    const prevRekap = {}, prevDirekap = {};
+    scanIds.forEach(id=>{
+      prevRekap[id] = state.rekap[id] ? { ...state.rekap[id] } : null; // null = sesi ini belum pernah direkap sama sekali sebelumnya
+      const scBefore = state.scans.find(s=>s.id===id);
+      prevDirekap[id] = scBefore ? !!scBefore.direkap : false;
+    });
+    state.lastBulkHadir = { week, scanIds, prevRekap, prevDirekap };
+
+    // Ganti dengan OBJECT BARU (bukan mutasi in-place) supaya dijamin dianggap "berubah" oleh
+    // apa pun yang membaca state.rekap, dan supaya tidak ada referensi lama yang nyangkut.
+    const newRekap = { ...state.rekap };
+    scanIds.forEach(id=>{ newRekap[id] = { ...hadirSemua }; });
+    state.rekap = newRekap;
+    state.scans = state.scans.map(s=> scanIds.includes(s.id) ? {...s, direkap:true} : s);
+    state.rekapDirtyAt = Date.now(); // tandai: ada edit lokal, lihat penjelasan di loadClass()
+    console.log('[bulkMarkWeekHadir] minggu', week, '-> scanIds ditandai hadir:', scanIds);
+    render();
+    alert(`Selesai: ${scansInWeek.length} sesi minggu ${week} sudah ditandai Hadir untuk ${state.students.length} mahasiswa.\n\nKalau ini salah pencet atau ternyata ada yang tidak hadir, klik tombol "Urungkan Tandai Hadir Semua" yang sekarang muncul di sebelah tombol ini -- SELAMA belum diedit ulang manual sesudahnya.`);
+
+    safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{
+      scanIds.forEach(id=>{ latest[id] = { ...hadirSemua }; });
+      return latest;
+    });
+    safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
+      return latest.map(s=> scanIds.includes(s.id) ? {...s, direkap:true} : s);
+    });
+  }catch(err){
+    console.error('[bulkMarkWeekHadir] GAGAL:', err);
+    alert('Terjadi error saat menandai hadir semua: ' + (err && err.message ? err.message : err) + '\n\nSilakan screenshot pesan ini.');
+  }
+}
+
+// Mengembalikan rekap ke kondisi SEBELUM "Tandai Hadir Semua" terakhir dijalankan (lihat
+// snapshot yang disimpan di state.lastBulkHadir). Sesi yang sebelumnya BELUM PERNAH direkap
+// sama sekali akan dikembalikan ke status "Belum direkap" (bukan sekadar dikosongkan),
+// supaya tombol "Isi rekap" (bukan "Edit rekap") muncul lagi seperti semula.
+function undoBulkMarkWeekHadir(){
+  try{
+    const snap = state.lastBulkHadir;
+    if(!snap){ alert('Tidak ada aksi "Tandai Hadir Semua" yang bisa diurungkan.'); return; }
+    const ok = confirm(`Urungkan "Tandai Hadir Semua" untuk minggu ${snap.week} (${snap.scanIds.length} sesi)? Rekap sesi-sesi itu akan dikembalikan seperti sebelum tombol tadi diklik.`);
+    if(!ok) return;
+
+    const newRekap = { ...state.rekap };
+    snap.scanIds.forEach(id=>{
+      if(snap.prevRekap[id]===null) delete newRekap[id]; // dulu belum pernah direkap -> hapus lagi
+      else newRekap[id] = { ...snap.prevRekap[id] };
+    });
+    state.rekap = newRekap;
+    state.scans = state.scans.map(s=> snap.scanIds.includes(s.id) ? {...s, direkap: snap.prevDirekap[s.id]} : s);
+    state.rekapDirtyAt = Date.now(); // tetap tandai sebagai edit lokal, lihat penjelasan di loadClass()
+    const undoneWeek = snap.week;
+    state.lastBulkHadir = null; // sekali diurungkan, tidak bisa diurungkan lagi (hindari redo yang membingungkan)
+    render();
+    alert(`Berhasil diurungkan: rekap minggu ${undoneWeek} sudah dikembalikan seperti sebelum "Tandai Hadir Semua" tadi.`);
+
+    safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{
+      snap.scanIds.forEach(id=>{
+        if(snap.prevRekap[id]===null) delete latest[id];
+        else latest[id] = { ...snap.prevRekap[id] };
+      });
+      return latest;
+    });
+    safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
+      return latest.map(s=> snap.scanIds.includes(s.id) ? {...s, direkap: snap.prevDirekap[s.id]} : s);
+    });
+  }catch(err){
+    console.error('[undoBulkMarkWeekHadir] GAGAL:', err);
+    alert('Terjadi error saat mengurungkan: ' + (err && err.message ? err.message : err) + '\n\nSilakan screenshot pesan ini.');
+  }
 }
 
 function exportOfficialExcel(){

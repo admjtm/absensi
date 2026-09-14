@@ -2571,7 +2571,10 @@ let state = {
                       // yang keliru tanpa keterangan apa-apa.
   modal: null, // { type:'image', url } | { type:'rekap', scan }
   summaryMatkulId: null,
-  summaryWeek: 1,
+  summaryWeek: null, // minggu yang sedang ditampilkan di "Rekap Absensi per Minggu" -- disinkronkan
+                      // dengan scanListWeek (lihat renderSummaryMatrix & setActiveWeek), null = belum
+                      // diset, default ke minggu berjalan (dulu defaultnya selalu "Minggu 1" secara
+                      // terpisah, itu sebabnya dua panel ini bisa menunjukkan minggu yang berbeda).
   scanListWeek: null, // minggu yang sedang ditampilkan di "Daftar Scan" (null = belum diset, default ke minggu berjalan)
   rekapZoom: 1, // level zoom tabel "Rekap Absensi per Minggu" (1 = 100%, di-reset tiap reload halaman)
   semesterStart: null, // 'YYYY-MM-DD', tanggal Senin minggu pertama semester (per kelas)
@@ -2864,31 +2867,59 @@ async function safeSet(key, value){
 // Perbaikannya: sebelum menyimpan, SELALU ambil dulu data rekap/scans/matkul yang PALING BARU
 // dari server, baru terapkan perubahan yang sedang dilakukan device ini di atas data terbaru
 // itu (bukan di atas salinan lama di memori) -- supaya perubahan device lain tidak pernah hilang.
+//
+// BUG BARU yang ditemukan & diperbaiki di sini: pola "ambil-dulu-baru-simpan" di atas AMAN kalau
+// dilakukan SATU PER SATU secara berurutan, tapi TIDAK aman kalau ADA DUA PROSES SIMPAN UNTUK KEY
+// YANG SAMA berjalan BERSAMAAN dari tab/perangkat yang SAMA -- misalnya admin mengisi & menyimpan
+// beberapa "rekap" (untuk sesi/mata kuliah berbeda) secara beruntun dengan cepat. Kalau proses
+// simpan KEDUA sempat "mengambil data terbaru" SEBELUM proses simpan PERTAMA selesai menuliskan
+// hasilnya ke server, maka proses kedua bekerja di atas data yang belum punya rekapan dari proses
+// pertama -- begitu proses kedua selesai menyimpan, rekapan dari proses pertama ikut TERTIMPA
+// HILANG walau sempat tersimpan sesaat. Inilah sebab rekapan yang sudah diisi & sempat berstatus
+// "Sudah" tetap muncul Alpa di tabel Rekap Mingguan, khususnya di kelas dengan banyak mata kuliah/
+// sesi yang direkap berturut-turut dalam sekali duduk (mis. kelas dengan jadwal padat).
+// Perbaikannya: setiap operasi simpan untuk KEY yang sama kini diantre (diserialkan) per key --
+// operasi berikutnya untuk key yang sama baru mulai mengambil data "terbaru" SETELAH operasi
+// sebelumnya untuk key itu benar-benar selesai (baik sukses maupun gagal). Key yang berbeda
+// (mis. "rekap" dan "scans", atau kelas yang berbeda) tetap berjalan bebas tanpa saling menunggu.
+const _saveQueueByKey = Object.create(null);
+function _queuedSave(key, taskFn){
+  const prev = _saveQueueByKey[key] || Promise.resolve();
+  // taskFn dijalankan setelah operasi SEBELUMNYA untuk key ini selesai, apapun hasilnya (sukses
+  // atau gagal) -- supaya satu kegagalan tidak menyumbat antrean key ini selamanya.
+  const run = prev.then(taskFn, taskFn);
+  _saveQueueByKey[key] = run.catch(()=>{}); // simpan sebagai penanda "sedang berjalan", tangkap error di sini saja
+  return run;
+}
 async function safeSaveArray(key, stateField, applyFn){
-  let latest;
-  try{
-    const r = await safeGetRaw(key);
-    latest = (r.found && Array.isArray(r.value)) ? r.value : (state[stateField] || []);
-  }catch(e){ latest = state[stateField] || []; }
-  const result = applyFn(latest);
-  const finalArr = result || latest;
-  await safeSet(key, finalArr);
-  state[stateField] = finalArr;
-  saveCachedClass(keyBase());
-  render();
+  return _queuedSave(key, async ()=>{
+    let latest;
+    try{
+      const r = await safeGetRaw(key);
+      latest = (r.found && Array.isArray(r.value)) ? r.value : (state[stateField] || []);
+    }catch(e){ latest = state[stateField] || []; }
+    const result = applyFn(latest);
+    const finalArr = result || latest;
+    await safeSet(key, finalArr);
+    state[stateField] = finalArr;
+    saveCachedClass(keyBase());
+    render();
+  });
 }
 async function safeSaveObject(key, stateField, applyFn){
-  let latest;
-  try{
-    const r = await safeGetRaw(key);
-    latest = (r.found && r.value && typeof r.value==='object') ? r.value : (state[stateField] || {});
-  }catch(e){ latest = state[stateField] || {}; }
-  const result = applyFn(latest);
-  const finalObj = result || latest;
-  await safeSet(key, finalObj);
-  state[stateField] = finalObj;
-  saveCachedClass(keyBase());
-  render();
+  return _queuedSave(key, async ()=>{
+    let latest;
+    try{
+      const r = await safeGetRaw(key);
+      latest = (r.found && r.value && typeof r.value==='object') ? r.value : (state[stateField] || {});
+    }catch(e){ latest = state[stateField] || {}; }
+    const result = applyFn(latest);
+    const finalObj = result || latest;
+    await safeSet(key, finalObj);
+    state[stateField] = finalObj;
+    saveCachedClass(keyBase());
+    render();
+  });
 }
 
 function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
@@ -3701,7 +3732,10 @@ function renderWeeklyRecap(){
     </div>`;
   }
   if(!state.summaryWeek || state.summaryWeek<1 || state.summaryWeek>TOTAL_WEEKS){
-    state.summaryWeek = 1;
+    // Default ke minggu yang sama dengan panel "Daftar Scan" (sudah dihitung di renderRekap
+    // sebelum fungsi ini dipanggil) kalau ada; kalau tidak, hitung minggu berjalan sendiri.
+    const curWeek = state.scanListWeek || weekIndexForDate(todayStr(), state.semesterStart) || 1;
+    state.summaryWeek = Math.min(Math.max(curWeek,1), TOTAL_WEEKS);
   }
   const week = state.summaryWeek;
   const monday = weekMondayOf(week, state.semesterStart);
@@ -4396,32 +4430,37 @@ function attachHandlers(){
     state.modal = { type:'rekap', id:b.dataset.openRekap };
     renderModal();
   }));
+  // Panel "Daftar Scan" dan "Rekap Absensi per Minggu" tadinya punya pilihan minggu SENDIRI-
+  // SENDIRI (state.scanListWeek vs state.summaryWeek) -- gonta-ganti minggu di satu panel tidak
+  // ikut mengubah panel lainnya, jadi terasa tidak nyambung padahal keduanya menampilkan kelas
+  // yang sama. Sekarang keduanya diset BERSAMAAN lewat setActiveWeek() supaya selalu menunjukkan
+  // minggu yang sama, dari panel mana pun perubahannya dilakukan.
+  function setActiveWeek(w){
+    state.scanListWeek = w;
+    state.summaryWeek = w;
+    render();
+  }
   const summaryWeekSelect = document.getElementById('summaryWeekSelect');
   if(summaryWeekSelect) summaryWeekSelect.addEventListener('change', ()=>{
-    state.summaryWeek = parseInt(summaryWeekSelect.value,10);
-    render();
+    setActiveWeek(parseInt(summaryWeekSelect.value,10));
   });
   // Navigasi minggu untuk panel "Daftar Scan" (lihat riwayat upload per minggu, default
   // minggu berjalan) -- lihat renderRekap().
   const scanListWeekSelect = document.getElementById('scanListWeekSelect');
   if(scanListWeekSelect) scanListWeekSelect.addEventListener('change', ()=>{
-    state.scanListWeek = parseInt(scanListWeekSelect.value,10);
-    render();
+    setActiveWeek(parseInt(scanListWeekSelect.value,10));
   });
   const scanListWeekPrev = document.getElementById('scanListWeekPrev');
   if(scanListWeekPrev) scanListWeekPrev.addEventListener('click', ()=>{
-    state.scanListWeek = Math.max(1, (state.scanListWeek||1)-1);
-    render();
+    setActiveWeek(Math.max(1, (state.scanListWeek||1)-1));
   });
   const scanListWeekNext = document.getElementById('scanListWeekNext');
   if(scanListWeekNext) scanListWeekNext.addEventListener('click', ()=>{
-    state.scanListWeek = Math.min(TOTAL_WEEKS, (state.scanListWeek||1)+1);
-    render();
+    setActiveWeek(Math.min(TOTAL_WEEKS, (state.scanListWeek||1)+1));
   });
   const scanListWeekToday = document.getElementById('scanListWeekToday');
   if(scanListWeekToday) scanListWeekToday.addEventListener('click', ()=>{
-    state.scanListWeek = state.semesterStart ? (weekIndexForDate(todayStr(), state.semesterStart) || 1) : 1;
-    render();
+    setActiveWeek(state.semesterStart ? (weekIndexForDate(todayStr(), state.semesterStart) || 1) : 1);
   });
   const exportExcelBtn = document.getElementById('exportExcelBtn');
   if(exportExcelBtn) exportExcelBtn.addEventListener('click', exportOfficialExcel);

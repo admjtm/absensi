@@ -2616,14 +2616,37 @@ async function loadClass(){
     state.loading = true;
   }
   render();
-  const [rosterRes, matkul, scans, rekap, semStart, libur] = await batchGetClassData_(base);
+  const [rosterRes, matkulRes, scansRes, rekapRes, semStartRes, liburRes] = await batchGetClassData_(base);
   if(base !== keyBase()){
     // Pengguna sudah pindah ke kelas lain sebelum data ini selesai diambil -- buang hasil
     // ini supaya tidak menimpa data kelas yang sedang ditampilkan sekarang.
     return;
   }
+
+  // === PERBAIKAN BUG UTAMA (mata kuliah & jadwal "berubah-ubah sendiri") ===
+  // Sebelumnya kode di bawah ini TIDAK BISA membedakan 3 situasi yang berbeda untuk tiap data:
+  //   1) berhasil diambil dari server (found:true)
+  //   2) GAGAL diambil dari server -- koneksi putus-nyambung, Apps Script lambat/timeout, dsb
+  //   3) memang belum pernah ada datanya sama sekali (kelas baru pertama kali dibuka)
+  // Situasi (2) dan (3) tadinya diperlakukan SAMA ("dianggap kosong/belum ada"). Akibatnya
+  // setiap kali koneksi sedikit terganggu saat memuat kelas, aplikasi mengira kelas itu "baru"
+  // lalu MENIMPA mata kuliah & jadwal yang sudah diatur admin dengan data bawaan (SEED_MATKUL) --
+  // inilah sebab mata kuliah dan jadwal terasa berubah sendiri tanpa ada yang mengeditnya.
+  // Sekarang: kalau pengambilan data GAGAL, data yang sudah tampil (dari cache) dibiarkan apa
+  // adanya -- TIDAK diganti dan TIDAK ditimpa ke server. Data bawaan hanya dipakai kalau server
+  // benar-benar mengonfirmasi datanya belum pernah ada.
+  //
+  // Bug kedua yang ikut diperbaiki: sebelumnya kode mengecek "matkul.length" untuk memutuskan
+  // apakah perlu diisi data bawaan. Kalau admin sengaja MENGHAPUS SEMUA mata kuliah (list jadi
+  // kosong tapi tetap tersimpan), pengecekan itu keliru menganggap kelas ini "belum ada
+  // datanya" dan mengisi ulang dengan data bawaan. Sekarang dipakai status found/error dari
+  // server, bukan panjang list, supaya list yang sengaja dikosongkan tetap kosong.
+
+  // --- Roster mahasiswa ---
   if(rosterRes.found){
     state.students = rosterRes.value;
+  } else if(rosterRes.error){
+    // Gagal mengambil data dari server -- biarkan daftar mahasiswa yang sudah tampil apa adanya.
   } else if(SEED_STUDENTS[base]){
     // first time this class is opened: pre-fill with the official roster provided
     state.students = SEED_STUDENTS[base].map(s=>({id:uid(), nama:s.nama, nim:s.nim}));
@@ -2634,108 +2657,120 @@ async function loadClass(){
   // Urutkan daftar mahasiswa berdasarkan NIM dari yang terkecil, berlaku untuk semua kelas
   // (baik data lama yang sudah tersimpan maupun data baru dari SEED_STUDENTS).
   state.students.sort((a,b)=> String(a.nim).localeCompare(String(b.nim), undefined, {numeric:true}));
-  if(matkul && matkul.length){
-    state.matkul = matkul;
+
+  // --- Mata kuliah & jadwal ---
+  if(matkulRes.error){
+    // Gagal mengambil data mata kuliah/jadwal dari server -- JANGAN dianggap kelas baru,
+    // JANGAN ditimpa dengan data bawaan. Biarkan yang sudah tampil (cache) apa adanya sampai
+    // berhasil dimuat ulang (mis. saat halaman di-refresh dengan koneksi yang lebih stabil).
+  } else if(matkulRes.found){
+    state.matkul = matkulRes.value || [];
     normalizeMatkulHari();
     // CATATAN: Migrasi otomatis (yang dulu menambahkan ulang mata kuliah dari SEED_MATKUL
     // setiap kali kelas dibuka) sudah DIMATIKAN. Dulu ini menyebabkan mata kuliah yang sudah
     // dihapus admin lewat tab "Mata Kuliah" selalu muncul lagi setiap halaman dibuka ulang,
     // karena sistem menganggapnya "belum ada" dan menambahkannya lagi secara otomatis.
     // Sekarang data mata kuliah tersimpan (state.matkul) dipakai apa adanya -- kalau admin
-    // menghapus satu mata kuliah, mata kuliah itu akan tetap terhapus permanen.
-    //
-    // LAPIS PENGAMAN TAMBAHAN: apapun penyebabnya (deploy lama yang masih aktif, submit
-    // form dobel, dsb), setiap kali kelas ini dibuka sistem sekarang otomatis mendeteksi
-    // & menggabungkan mata kuliah yang namanya PERSIS SAMA jadi 1 entri saja -- hari
-    // kuliahnya digabung (union), lalu entri duplikatnya dibuang permanen dan disimpan ulang.
-    // Jadi walau ada duplikat baru muncul dari sumber mana pun, begitu kelas dibuka lagi
-    // otomatis dirapikan sendiri tanpa perlu hapus manual satu-satu.
-    const dedupMap = new Map();
-    state.matkul.forEach(m=>{
-      const key = m.nama.trim();
-      if(!dedupMap.has(key)){
-        dedupMap.set(key, {...m, hari:[...(m.hari||[])]});
-      } else {
-        const existing = dedupMap.get(key);
-        (m.hari||[]).forEach(h=>{ if(!existing.hari.includes(h)) existing.hari.push(h); });
-        if(!existing.jam && m.jam) existing.jam = m.jam;
+    // menghapus satu (atau semua) mata kuliah, mata kuliah itu akan tetap terhapus permanen.
+    if(state.matkul.length){
+      // LAPIS PENGAMAN TAMBAHAN: apapun penyebabnya (deploy lama yang masih aktif, submit
+      // form dobel, dsb), setiap kali kelas ini dibuka sistem sekarang otomatis mendeteksi
+      // & menggabungkan mata kuliah yang namanya PERSIS SAMA jadi 1 entri saja -- hari
+      // kuliahnya digabung (union), lalu entri duplikatnya dibuang permanen dan disimpan ulang.
+      // Jadi walau ada duplikat baru muncul dari sumber mana pun, begitu kelas dibuka lagi
+      // otomatis dirapikan sendiri tanpa perlu hapus manual satu-satu.
+      const dedupMap = new Map();
+      state.matkul.forEach(m=>{
+        const key = m.nama.trim();
+        if(!dedupMap.has(key)){
+          dedupMap.set(key, {...m, hari:[...(m.hari||[])]});
+        } else {
+          const existing = dedupMap.get(key);
+          (m.hari||[]).forEach(h=>{ if(!existing.hari.includes(h)) existing.hari.push(h); });
+          if(!existing.jam && m.jam) existing.jam = m.jam;
+        }
+      });
+      const deduped = Array.from(dedupMap.values());
+      if(deduped.length !== state.matkul.length){
+        state.matkul = deduped;
+        await saveMatkul();
       }
-    });
-    const deduped = Array.from(dedupMap.values());
-    if(deduped.length !== state.matkul.length){
-      state.matkul = deduped;
-      await saveMatkul();
     }
   } else if(SEED_MATKUL[base]){
+    // benar-benar belum pernah ada datanya (dikonfirmasi server, bukan sekadar gagal ambil) --
     // first time this class is opened: pre-fill with the official matkul list (with jam/pertemuan + hari perkiraan)
     state.matkul = SEED_MATKUL[base].map(m=>({id:uid(), nama:m.nama, jam:m.jam, hari: m.hari ? [m.hari] : []}));
     await saveMatkul();
   } else {
-    state.matkul = matkul;
+    state.matkul = [];
     normalizeMatkulHari();
   }
-  state.scans = scans;
-  state.rekap = rekap;
-  state.libur = libur || [];
-  if(semStart){
-    state.semesterStart = semStart;
-  } else {
-    // belum pernah diatur untuk kelas ini -> pakai default semester berjalan
+
+  // --- Scans, rekap, libur: kalau gagal ambil, jangan timpa data yang sudah tampil ---
+  if(!scansRes.error) state.scans = scansRes.value || [];
+  if(!rekapRes.error) state.rekap = rekapRes.value || {};
+  if(!liburRes.error) state.libur = liburRes.value || [];
+
+  if(semStartRes.value){
+    state.semesterStart = semStartRes.value;
+  } else if(!semStartRes.error){
+    // benar-benar belum pernah diatur untuk kelas ini -> pakai default semester berjalan
     state.semesterStart = DEFAULT_SEMESTER_START;
     await saveSemesterStart();
   }
+  // kalau semStartRes.error: biarkan nilai yang sudah ada (dari cache di atas) apa adanya.
+
   state.loading = false;
   saveCachedClass(base);
   render();
 }
-// Mengambil roster+matkul+scans+rekap+semesterStart untuk 1 kelas dalam SATU kali
-// request ke Apps Script (?keys=k1,k2,k3,...), jauh lebih cepat daripada 5 request
-// terpisah -- terutama untuk kelas yang baru pertama kali dibuka (belum ada di cache
-// browser). Kalau backend lama (belum mendukung ?keys=) masih terpasang, otomatis
-// jatuh ke cara lama (5 request terpisah) supaya aplikasi tetap jalan normal.
+// Mengambil roster+matkul+scans+rekap+semesterStart+libur untuk 1 kelas dalam SATU kali
+// request ke Apps Script (?keys=k1,k2,k3,...), jauh lebih cepat daripada request terpisah --
+// terutama untuk kelas yang baru pertama kali dibuka (belum ada di cache browser). Kalau
+// backend lama (belum mendukung ?keys=) masih terpasang, otomatis jatuh ke cara lama (request
+// terpisah per key) supaya aplikasi tetap jalan normal.
+// Mengembalikan array berisi 6 objek {found, value, error} (satu per key, urutan sama dengan
+// `keys` di bawah) -- SELALU dalam bentuk ini (bukan cuma "value" mentah), supaya pemanggil
+// (loadClass) bisa membedakan "datanya kosong" dari "gagal diambil". Lihat catatan di loadClass().
 async function batchGetClassData_(base){
   const keys = ['roster:'+base, 'matkul:'+base, 'scans:'+base, 'rekap:'+base, 'semesterStart:'+base, 'libur:'+base];
   try{
     const res = await fetch(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')));
     const r = await res.json();
     if(r && r.values){
-      const parse = (k, fallback)=>{
+      const parse = (k)=>{
         const entry = r.values[k];
-        if(entry && entry.found && entry.value) return { found:true, value: JSON.parse(entry.value) };
-        return { found:false, value: fallback };
+        if(!entry) return { found:false, value:null, error:false };
+        if(entry.found && entry.value){
+          try{
+            return { found:true, value: JSON.parse(entry.value), error:false };
+          }catch(e){
+            // Data tersimpan tapi rusak/tidak bisa dibaca -- perlakukan sebagai GAGAL, bukan
+            // "belum ada", supaya tidak diam-diam ditimpa data bawaan.
+            console.error('Data rusak (gagal di-parse) untuk key:', k, e);
+            return { found:false, value:null, error:true };
+          }
+        }
+        return { found:false, value:null, error:false };
       };
-      const rosterRes = parse(keys[0], []);
-      return [
-        rosterRes,
-        parse(keys[1], []).value,
-        parse(keys[2], []).value,
-        parse(keys[3], {}).value,
-        parse(keys[4], null).value,
-        parse(keys[5], []).value,
-      ];
+      return keys.map(parse);
     }
   }catch(e){ console.error('Batch load gagal, jatuh ke cara lama:', e); }
   // Fallback: backend belum mendukung ?keys= (Code.gs belum di-update) atau request batch gagal.
-  return Promise.all([
-    safeGetRaw(keys[0]),
-    safeGet(keys[1], []),
-    safeGet(keys[2], []),
-    safeGet(keys[3], {}),
-    safeGet(keys[4], null),
-    safeGet(keys[5], []),
-  ]);
-}
-async function safeGet(key, fallback){
-  const r = await safeGetRaw(key);
-  return r.found ? r.value : fallback;
+  return Promise.all(keys.map(k=> safeGetRaw(k)));
 }
 async function safeGetRaw(key){
   try{
     const res = await fetch(SHEETS_API_URL + '?key=' + encodeURIComponent(key));
     const r = await res.json();
-    if(r && r.found && r.value) return { found:true, value: JSON.parse(r.value) };
-    return { found:false, value:null };
-  }catch(e){ console.error('Gagal membaca dari Google Sheets:', key, e); return { found:false, value:null }; }
+    if(r && r.found && r.value) return { found:true, value: JSON.parse(r.value), error:false };
+    return { found:false, value:null, error:false };
+  }catch(e){
+    console.error('Gagal membaca dari Google Sheets:', key, e);
+    // error:true = permintaan ini GAGAL (jaringan/parsing), BUKAN berarti datanya memang belum
+    // pernah ada. Pemanggil wajib membedakan ini -- lihat catatan di loadClass().
+    return { found:false, value:null, error:true };
+  }
 }
 async function saveStudents(){
   // Urutkan berdasarkan NIM dari yang terkecil setiap kali data mahasiswa disimpan

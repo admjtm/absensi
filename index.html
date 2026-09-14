@@ -3863,6 +3863,7 @@ function renderWeeklyRecap(){
     ${!adaJadwal ? `<div class="note">Belum ada mata kuliah yang diatur "Hari"-nya di tab "Mata Kuliah" &mdash; kolom per mata kuliah belum bisa ditampilkan.</div>` : ''}
     <div style="margin-bottom:14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
       <button class="btn btn-ghost btn-sm" id="exportWeekExcelBtn" ${!state.students.length ? 'disabled' : ''}>&#8595; Download Excel (Minggu ${week} ini)</button>
+      ${state.role==='admin' ? `<button class="btn btn-primary btn-sm" id="bulkMarkWeekHadirBtn" ${!state.students.length ? 'disabled' : ''}>&#10003; Tandai Hadir Semua (Minggu ${week} ini)</button>` : ''}
       <div style="display:flex; align-items:center; gap:4px; border:1px solid var(--line-strong); border-radius:8px; padding:2px;">
         <button class="btn btn-ghost btn-sm" id="rekapZoomOut" title="Perkecil tampilan tabel" style="padding:4px 10px;">&minus;</button>
         <span class="mono" id="rekapZoomLabel" style="font-size:12px; min-width:42px; text-align:center;">${Math.round((state.rekapZoom||1)*100)}%</span>
@@ -4091,6 +4092,14 @@ function renderModal(){
             <div id="imgZoomWrap_rekap_${sc.id}">${renderZoomableImage(sc.dataUrl, 'Scan absensi', 'rekap_'+sc.id)}</div>
             ${state.students.length ? `
             <form id="rekapForm">
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; padding:10px 12px; background:var(--paper); border:1px solid var(--line); border-radius:8px;">
+                <span style="font-size:12px; font-weight:700; color:var(--ink-soft);">Tandai semua:</span>
+                <button type="button" class="btn btn-ghost btn-sm" data-mark-all="H">Hadir Semua</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-mark-all="S">Sakit Semua</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-mark-all="I">Izin Semua</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-mark-all="A">Alpa Semua</button>
+                <span class="note" style="margin-left:auto;">Klik dulu salah satu di atas, lalu ubah manual baris yang berbeda.</span>
+              </div>
               <div class="excel-table-scroll">
                 <table>
                   <thead><tr><th style="width:34px;">No</th><th>Nama</th><th>NIM</th><th style="width:190px;">Status</th></tr></thead>
@@ -4116,6 +4125,19 @@ function renderModal(){
   }
   const rekapForm = document.getElementById('rekapForm');
   if(rekapForm){
+    // Tombol "Tandai semua" (Hadir/Sakit/Izin/Alpa Semua) -- set SEMUA radio status di form
+    // ini sekaligus ke satu nilai yang sama, supaya admin tidak perlu klik radio mahasiswa
+    // satu-per-satu kalau memang kelasnya kompak (mis. hadir semua). Baris yang perlu beda
+    // (mis. 1 mahasiswa izin) masih bisa diklik ulang manual sesudahnya sebelum "Simpan Rekap".
+    rekapForm.querySelectorAll('[data-mark-all]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const val = btn.dataset.markAll;
+        state.students.forEach(st=>{
+          const radio = rekapForm.querySelector(`input[name="st_${st.id}"][value="${val}"]`);
+          if(radio) radio.checked = true;
+        });
+      });
+    });
     rekapForm.addEventListener('submit', (e)=>{
       e.preventDefault();
       const scanId = state.modal.id;
@@ -4466,6 +4488,8 @@ function attachHandlers(){
   if(exportExcelBtn) exportExcelBtn.addEventListener('click', exportOfficialExcel);
   const exportWeekExcelBtn = document.getElementById('exportWeekExcelBtn');
   if(exportWeekExcelBtn) exportWeekExcelBtn.addEventListener('click', exportWeeklyExcelOne_);
+  const bulkMarkWeekHadirBtn = document.getElementById('bulkMarkWeekHadirBtn');
+  if(bulkMarkWeekHadirBtn) bulkMarkWeekHadirBtn.addEventListener('click', ()=> bulkMarkWeekHadir(state.summaryWeek));
   // Kontrol zoom tabel Rekap Mingguan: perbesar/perkecil tampilan (min 60%, max 200%),
   // supaya angka S/I/A yang kecil-kecil bisa dibaca lebih jelas saat perlu, tanpa mengubah
   // ukuran default tabel (yang sengaja dibuat kompak supaya muat 1 layar).
@@ -4643,6 +4667,47 @@ function cumulativeSIA(uptoDate, matkulId, studentId){
     else A+=jam; // status 'A' atau belum ditandai -> Alpa
   });
   return {S,I,A};
+}
+
+// Tandai HADIR untuk SEMUA mahasiswa, di SEMUA sesi (scan) pada minggu terpilih, dalam satu
+// klik -- ini jalan pintas kalau sesi-sesi minggu itu ternyata masih tampil "Alpa" semua di
+// tabel Rekap Mingguan walau statusnya sudah "Sudah direkap" (mis. gara-gara rekap lama sempat
+// tertimpa/hilang), atau memang kelasnya kompak hadir semua dan tidak mau isi manual satu-satu.
+// Mahasiswa yang beda (izin/sakit/alpa beneran) tetap bisa diedit ulang sesudahnya lewat
+// "Edit rekap" per sesi seperti biasa -- tombol ini cuma titik awal cepat, bukan pengganti
+// permanen kalau memang ada yang tidak hadir.
+function bulkMarkWeekHadir(week){
+  if(!state.semesterStart){ alert('Atur Tanggal Mulai Semester dulu di tab Mata Kuliah.'); return; }
+  if(!state.students.length){ alert('Belum ada data mahasiswa di kelas ini.'); return; }
+  week = week || state.summaryWeek || 1;
+  const monday = weekMondayOf(week, state.semesterStart);
+  const saturday = addDaysDate(monday, 5);
+  const mondayISO = toISO(monday), saturdayISO = toISO(saturday);
+  const scansInWeek = state.scans.filter(s=> s.tanggal>=mondayISO && s.tanggal<=saturdayISO);
+  if(!scansInWeek.length){ alert('Belum ada scan/sesi yang diupload untuk minggu ini, jadi tidak ada yang bisa ditandai.'); return; }
+
+  const ok = confirm(`Tandai HADIR untuk SEMUA ${state.students.length} mahasiswa, di ${scansInWeek.length} sesi (mata kuliah) minggu ${week} ini?\n\nKalau ada mahasiswa yang sebenarnya izin/sakit/alpa di minggu ini, buka "Edit rekap" pada sesi terkait sesudahnya untuk mengoreksi baris mahasiswa itu saja.`);
+  if(!ok) return;
+
+  const hadirSemua = {};
+  state.students.forEach(st=>{ hadirSemua[st.id] = 'H'; });
+
+  // Update optimistis di memori dulu supaya tabel langsung berubah, baru menyusul disimpan
+  // ke server (berbasis data TERBARU, sama seperti alur simpan rekap per-sesi biasa, supaya
+  // tidak menimpa perubahan device lain).
+  const scanIds = scansInWeek.map(s=>s.id);
+  scanIds.forEach(id=>{ state.rekap[id] = { ...hadirSemua }; });
+  state.scans.forEach(s=>{ if(scanIds.includes(s.id)) s.direkap = true; });
+  render();
+
+  safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{
+    scanIds.forEach(id=>{ latest[id] = { ...hadirSemua }; });
+    return latest;
+  });
+  safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
+    latest.forEach(s=>{ if(scanIds.includes(s.id)) s.direkap = true; });
+    return latest;
+  });
 }
 
 function exportOfficialExcel(){

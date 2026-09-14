@@ -2863,14 +2863,27 @@ async function safeSet(key, value){
   try{
     // Body dikirim sebagai string biasa (bukan header application/json) supaya browser
     // tidak melakukan CORS preflight (OPTIONS) yang tidak didukung Google Apps Script.
-    await fetch(SHEETS_API_URL, {
+    const res = await fetch(SHEETS_API_URL, {
       method: 'POST',
       body: JSON.stringify({ key: key, value: JSON.stringify(value) }),
     });
+    // CATATAN PENTING: sebelumnya kode di sini TIDAK PERNAH mengecek res.ok/isi respons --
+    // request dianggap "berhasil" hanya karena fetch() tidak melempar exception jaringan,
+    // padahal fetch() TETAP resolve normal walau server membalas error (mis. HTTP 500, atau
+    // Apps Script yang error/kena limit/redeploy) -- sehingga kegagalan simpan yang sebenarnya
+    // tidak pernah ketahuan sampai halaman di-reload dan datanya ternyata balik seperti semula.
+    let bodyText = null;
+    try{ bodyText = await res.text(); }catch(e2){ /* respons kosong/non-teks, abaikan */ }
+    if(!res.ok){
+      console.error('Server menolak penyimpanan (bukan HTTP 2xx):', key, res.status, bodyText);
+      return { ok:false, error:'HTTP '+res.status };
+    }
+    return { ok:true };
   }catch(e){
     console.error('Gagal menyimpan ke Google Sheets:', key, e);
     // Data tetap ada di memori (state) walau gagal tersimpan permanen,
     // jadi tampilan tidak boleh berhenti hanya karena ini gagal.
+    return { ok:false, error: String(e && e.message || e) };
   }
 }
 
@@ -2920,10 +2933,11 @@ async function safeSaveArray(key, stateField, applyFn){
     }catch(e){ latest = state[stateField] || []; }
     const result = applyFn(latest);
     const finalArr = result || latest;
-    await safeSet(key, finalArr);
+    const saveResult = await safeSet(key, finalArr);
     state[stateField] = finalArr;
     saveCachedClass(keyBase());
     render();
+    return saveResult; // {ok:true} atau {ok:false, error} -- lihat pemakaiannya di bulkMarkWeekHadir
   });
 }
 async function safeSaveObject(key, stateField, applyFn){
@@ -2935,10 +2949,11 @@ async function safeSaveObject(key, stateField, applyFn){
     }catch(e){ latest = state[stateField] || {}; }
     const result = applyFn(latest);
     const finalObj = result || latest;
-    await safeSet(key, finalObj);
+    const saveResult = await safeSet(key, finalObj);
     state[stateField] = finalObj;
     saveCachedClass(keyBase());
     render();
+    return saveResult; // {ok:true} atau {ok:false, error} -- lihat pemakaiannya di bulkMarkWeekHadir
   });
 }
 
@@ -4700,7 +4715,7 @@ function cumulativeSIA(uptoDate, matkulId, studentId){
 // Mahasiswa yang beda (izin/sakit/alpa beneran) tetap bisa diedit ulang sesudahnya lewat
 // "Edit rekap" per sesi seperti biasa -- tombol ini cuma titik awal cepat, bukan pengganti
 // permanen kalau memang ada yang tidak hadir.
-function bulkMarkWeekHadir(week){
+async function bulkMarkWeekHadir(week){
   try{
     if(!state.semesterStart){ alert('Atur Tanggal Mulai Semester dulu di tab Mata Kuliah.'); return; }
     if(!state.students.length){ alert('Belum ada data mahasiswa di kelas ini.'); return; }
@@ -4742,15 +4757,41 @@ function bulkMarkWeekHadir(week){
     state.rekapDirtyAt = Date.now(); // tandai: ada edit lokal, lihat penjelasan di loadClass()
     console.log('[bulkMarkWeekHadir] minggu', week, '-> scanIds ditandai hadir:', scanIds);
     render();
-    alert(`Selesai: ${scansInWeek.length} sesi minggu ${week} sudah ditandai Hadir untuk ${state.students.length} mahasiswa.\n\nKalau ini salah pencet atau ternyata ada yang tidak hadir, klik tombol "Urungkan Tandai Hadir Semua" yang sekarang muncul di sebelah tombol ini -- SELAMA belum diedit ulang manual sesudahnya.`);
 
-    safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{
-      scanIds.forEach(id=>{ latest[id] = { ...hadirSemua }; });
-      return latest;
-    });
-    safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
-      return latest.map(s=> scanIds.includes(s.id) ? {...s, direkap:true} : s);
-    });
+    // Simpan ke server, lalu TUNGGU hasilnya (dulu ini "tembak lalu lupa" -- kalau server
+    // menolak/timeout, tampilan sudah terlanjur bilang "berhasil" padahal sebenarnya cuma
+    // hidup di tab ini dan akan HILANG lagi begitu halaman di-reload). Sekarang hasil simpan
+    // dicek dulu, baru user diberi tahu status yang SEBENARNYA.
+    const [rekapSaveResult, scansSaveResult] = await Promise.all([
+      safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{
+        scanIds.forEach(id=>{ latest[id] = { ...hadirSemua }; });
+        return latest;
+      }),
+      safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
+        return latest.map(s=> scanIds.includes(s.id) ? {...s, direkap:true} : s);
+      }),
+    ]);
+
+    const gagalSimpan = !rekapSaveResult || !rekapSaveResult.ok || !scansSaveResult || !scansSaveResult.ok;
+    if(gagalSimpan){
+      const detail = [rekapSaveResult, scansSaveResult].filter(r=>r && !r.ok).map(r=>r.error).join('; ');
+      alert(`⚠️ PERUBAHAN INI TIDAK TERSIMPAN KE SERVER!\n\nTabel di layar tab ini SUDAH berubah jadi Hadir, tapi gagal disimpan permanen ke Google Sheets (${detail || 'sebab tidak diketahui'}).\n\nKalau halaman di-reload atau dibuka di perangkat lain, datanya akan KEMBALI seperti semula (Alpa). Ini kemungkinan besar masalah di koneksi/server Google Sheets-nya, bukan di tombolnya. Coba lagi sesaat lagi, atau screenshot pesan ini untuk dilaporkan.`);
+    } else {
+      // Verifikasi tambahan: baca ULANG dari server untuk MEMASTIKAN datanya benar-benar
+      // tersimpan seperti yang diharapkan (bukan cuma percaya respons HTTP 2xx).
+      let terverifikasi = false;
+      try{
+        const cek = await safeGetRaw('rekap:'+keyBase());
+        if(cek.found && cek.value){
+          terverifikasi = scanIds.every(id=> cek.value[id] && state.students.every(st=> cek.value[id][st.id]==='H'));
+        }
+      }catch(e){ /* verifikasi gagal diambil -- anggap belum terverifikasi, tapi jangan blokir alert utama */ }
+      if(terverifikasi){
+        alert(`✅ Berhasil DAN sudah terkonfirmasi tersimpan permanen di server: ${scansInWeek.length} sesi minggu ${week} ditandai Hadir untuk ${state.students.length} mahasiswa.\n\nKalau ini salah pencet, klik "Urungkan Tandai Hadir Semua" di sebelah tombol ini.`);
+      } else {
+        alert(`Tersimpan (server merespons OK), tapi saat dicek ulang datanya belum sepenuhnya cocok. Coba muat ulang (refresh) halaman ini sebentar lagi untuk memastikan, dan kabari saya kalau ternyata balik ke Alpa lagi.`);
+      }
+    }
   }catch(err){
     console.error('[bulkMarkWeekHadir] GAGAL:', err);
     alert('Terjadi error saat menandai hadir semua: ' + (err && err.message ? err.message : err) + '\n\nSilakan screenshot pesan ini.');

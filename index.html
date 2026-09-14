@@ -4214,10 +4214,23 @@ function renderModal(){
       try{
         const cek = await safeGetRaw('rekap:'+keyBase());
         const cocok = cek.found && cek.value && cek.value[scanId] && Object.keys(result).every(sid=> cek.value[scanId][sid]===result[sid]);
+        // Ringkasan mahasiswa yang statusnya BUKAN Hadir (biasanya cuma sedikit), supaya bisa
+        // langsung dicek dengan mata apakah yang tersimpan di SERVER (bukan cuma di layar) itu
+        // benar sesuai yang barusan diedit -- ini untuk memastikan tanpa harus buka Google Sheets.
+        const nonHadir = state.students
+          .filter(st=> result[st.id] !== 'H')
+          .map(st=> `${st.nama}: ${STATUS.find(s=>s.code===result[st.id])?.label || result[st.id]}`);
+        const ringkasanDiminta = nonHadir.length ? nonHadir.join('\n') : '(semua mahasiswa Hadir)';
+        const statusServer = cek.found && cek.value && cek.value[scanId]
+          ? state.students.filter(st=> cek.value[scanId][st.id] !== 'H').map(st=> `${st.nama}: ${STATUS.find(s=>s.code===cek.value[scanId][st.id])?.label || cek.value[scanId][st.id]}`)
+          : null;
+        const ringkasanServer = statusServer ? (statusServer.length ? statusServer.join('\n') : '(semua mahasiswa Hadir)') : '(gagal membaca ulang dari server)';
         if(!cocok){
-          alert('Server merespons OK, tapi saat dicek ulang datanya belum sepenuhnya cocok. Buka lagi "Edit rekap" pada sesi ini sesaat lagi untuk memastikan tersimpan dengan benar.');
+          alert(`⚠️ Data di server TIDAK COCOK dengan yang barusan disimpan.\n\nYang tadi diminta (di form):\n${ringkasanDiminta}\n\nYang TERBACA di server sekarang:\n${ringkasanServer}\n\nCoba buka lagi "Edit rekap" sesi ini sesaat lagi.`);
+        } else {
+          alert(`✅ Tersimpan & terkonfirmasi di server.\nStatus non-Hadir untuk sesi ini:\n${ringkasanDiminta}`);
         }
-      }catch(e2){ /* verifikasi gagal diambil, tidak fatal -- data sudah dianggap tersimpan dari respons HTTP OK di atas */ }
+      }catch(e2){ alert('Simpan sepertinya berhasil (server merespons OK), tapi verifikasi baca-ulang gagal karena: ' + (e2 && e2.message || e2) + '\n\nCoba cek lagi sesaat lagi.'); }
     });
   }
 }

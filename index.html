@@ -2594,6 +2594,10 @@ let state = {
                        // bisa di-"Urungkan" -- { week, scanIds, prevRekap:{scanId:objAtauNull},
                        // prevDirekap:{scanId:boolean} }. null kalau belum ada aksi yang bisa
                        // diurungkan (atau sudah pernah diurungkan / kelas berpindah).
+  rosterDirtyAt: 0, // sama seperti rekapDirtyAt, tapi untuk daftar mahasiswa (state.students) --
+                    // supaya mahasiswa yang baru saja ditambah/dihapus/diedit TIDAK ditimpa balik
+                    // oleh loadClass() yang masih mengambil data lama di belakang layar.
+  matkulDirtyAt: 0, // sama seperti rosterDirtyAt, tapi untuk daftar mata kuliah (state.matkul).
 };
 
 function currentProdi(){ return PRODI.find(p=>p.key===state.prodi); }
@@ -2669,7 +2673,11 @@ async function loadClass(){
 
   // --- Roster mahasiswa ---
   if(rosterRes.found){
-    state.students = rosterRes.value;
+    // PENGAMAN BALAPAN (sama seperti rekap/scans): kalau ada tambah/hapus/edit mahasiswa
+    // LOKAL setelah request ini mulai, data server di sini sudah PASTI lebih lama -- jangan
+    // ditimpa, biarkan hasil edit lokal (yang sedang disimpan sendiri lewat safeSaveArray) tetap
+    // dipakai. Inilah salah satu sebab mahasiswa yang baru ditambah tiba-tiba "hilang lagi".
+    if(state.rosterDirtyAt <= fetchStartedAt) state.students = rosterRes.value;
   } else if(rosterRes.error){
     // Gagal mengambil data dari server -- biarkan daftar mahasiswa yang sudah tampil apa adanya.
   } else if(SEED_STUDENTS[base]){
@@ -2689,7 +2697,8 @@ async function loadClass(){
     // JANGAN ditimpa dengan data bawaan. Biarkan yang sudah tampil (cache) apa adanya sampai
     // berhasil dimuat ulang (mis. saat halaman di-refresh dengan koneksi yang lebih stabil).
   } else if(matkulRes.found){
-    state.matkul = matkulRes.value || [];
+    if(state.matkulDirtyAt <= fetchStartedAt) state.matkul = matkulRes.value || [];
+    // PENGAMAN BALAPAN sama seperti roster/rekap di atas -- lihat catatan rosterDirtyAt.
     normalizeMatkulHari();
     // CATATAN: Migrasi otomatis (yang dulu menambahkan ulang mata kuliah dari SEED_MATKUL
     // setiap kali kelas dibuka) sudah DIMATIKAN. Dulu ini menyebabkan mata kuliah yang sudah
@@ -4273,19 +4282,30 @@ function attachHandlers(){
   document.querySelectorAll('[data-tab]').forEach(b=> b.addEventListener('click', ()=>{ state.tab=b.dataset.tab; render(); }));
 
   const addStudentForm = document.getElementById('addStudentForm');
-  if(addStudentForm) addStudentForm.addEventListener('submit', (e)=>{
+  if(addStudentForm) addStudentForm.addEventListener('submit', async (e)=>{
     e.preventDefault();
     const fd = new FormData(addStudentForm);
     const nama = fd.get('nama').trim(), nim = fd.get('nim').trim();
     if(!nama||!nim) return;
     const newSt = {id:uid(), nama, nim};
     state.students.push(newSt);
+    state.rosterDirtyAt = Date.now(); // tandai: ada edit lokal, lihat penjelasan di loadClass()
     render();
-    safeSaveArray('roster:'+keyBase(), 'students', latest=>{
+    addStudentForm.reset();
+    const saveResult = await safeSaveArray('roster:'+keyBase(), 'students', latest=>{
       if(!latest.some(s=>s.id===newSt.id)) latest.push(newSt);
       latest.sort((a,b)=> String(a.nim).localeCompare(String(b.nim), undefined, {numeric:true}));
       return latest;
     });
+    if(!saveResult || !saveResult.ok){
+      alert(`⚠️ "${nama}" TIDAK tersimpan ke server (${saveResult && saveResult.error || 'sebab tidak diketahui'}).\n\nDia akan HILANG lagi kalau halaman di-reload. Coba tambahkan ulang sesaat lagi.`);
+      return;
+    }
+    try{
+      const cek = await safeGetRaw('roster:'+keyBase());
+      const cocok = cek.found && Array.isArray(cek.value) && cek.value.some(s=>s.id===newSt.id);
+      if(!cocok) alert(`Server merespons OK, tapi saat dicek ulang "${nama}" belum terlihat di data server. Coba refresh halaman untuk memastikan.`);
+    }catch(e2){ /* verifikasi gagal diambil, tidak fatal */ }
   });
   const resetToSeedBtn = document.getElementById('resetToSeedBtn');
   if(resetToSeedBtn) resetToSeedBtn.addEventListener('click', ()=>{
@@ -4295,6 +4315,7 @@ function attachHandlers(){
     const ok = confirm('Ganti SELURUH daftar mahasiswa kelas '+state.kelas+' saat ini dengan data resmi ('+seed.length+' mahasiswa)? Data mahasiswa yang ada sekarang di kelas ini akan hilang dan tidak bisa dikembalikan.');
     if(!ok) return;
     state.students = seed.map(s=>({id:uid(), nama:s.nama, nim:s.nim}));
+    state.rosterDirtyAt = Date.now();
     render();
     saveStudents();
   });
@@ -4322,6 +4343,7 @@ function attachHandlers(){
       added++;
     });
     if(!added) alert('Tidak ada baris valid ditemukan. Pastikan format: Nama, NIM');
+    state.rosterDirtyAt = Date.now();
     render();
     if(added) safeSaveArray('roster:'+keyBase(), 'students', latest=>{
       newOnes.forEach(s=>{ if(!latest.some(x=>x.id===s.id)) latest.push(s); });
@@ -4333,6 +4355,7 @@ function attachHandlers(){
     if(!confirm('Hapus mahasiswa ini?')) return;
     const delId = b.dataset.delStudent;
     state.students = state.students.filter(s=>s.id!==delId);
+    state.rosterDirtyAt = Date.now();
     render();
     safeSaveArray('roster:'+keyBase(), 'students', latest=> latest.filter(s=>s.id!==delId));
   }));
@@ -4344,6 +4367,7 @@ function attachHandlers(){
     const editId = st.id;
     const newNama = nama.trim()||st.nama, newNim = nim.trim()||st.nim;
     st.nama = newNama; st.nim = newNim;
+    state.rosterDirtyAt = Date.now();
     render();
     safeSaveArray('roster:'+keyBase(), 'students', latest=>{
       const idx = latest.findIndex(s=>s.id===editId);
@@ -4367,6 +4391,7 @@ function attachHandlers(){
     if(submitBtn) submitBtn.disabled = true;
     const newMk = {id:uid(), nama, jam, hari};
     state.matkul.push(newMk);
+    state.matkulDirtyAt = Date.now();
     render();
     safeSaveArray('matkul:'+keyBase(), 'matkul', latest=>{
       if(!latest.some(m=>m.id===newMk.id)) latest.push(newMk);
@@ -4377,6 +4402,7 @@ function attachHandlers(){
     if(!confirm('Hapus mata kuliah ini?')) return;
     const delId = b.dataset.delMatkul;
     state.matkul = state.matkul.filter(m=>m.id!==delId);
+    state.matkulDirtyAt = Date.now();
     render();
     safeSaveArray('matkul:'+keyBase(), 'matkul', latest=> latest.filter(m=>m.id!==delId));
   }));
@@ -4396,6 +4422,7 @@ function attachHandlers(){
     const newJam = (!isNaN(jam) && jam>0) ? jam : mk.jam;
     mk.nama = newNama;
     mk.jam = newJam;
+    state.matkulDirtyAt = Date.now();
     render();
     safeSaveArray('matkul:'+keyBase(), 'matkul', latest=>{
       const idx = latest.findIndex(m=>m.id===editId);
@@ -4415,6 +4442,7 @@ function attachHandlers(){
     }
     const toggleId = mk.id;
     const newHari = [...mk.hari];
+    state.matkulDirtyAt = Date.now();
     safeSaveArray('matkul:'+keyBase(), 'matkul', latest=>{
       const idx = latest.findIndex(m=>m.id===toggleId);
       if(idx>=0) latest[idx] = {...latest[idx], hari:newHari};

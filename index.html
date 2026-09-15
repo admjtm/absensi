@@ -2759,6 +2759,61 @@ async function loadClass(){
   if(!rekapRes.error && !adaEditLokalSetelahFetch) state.rekap = rekapRes.value || {};
   if(!liburRes.error) state.libur = liburRes.value || [];
 
+  // LAPIS PENGAMAN TAMBAHAN (mirip dedup mata kuliah di atas): kalau ada 2+ scan untuk
+  // matkul+tanggal yang SAMA (mis. foto pertama buram lalu diupload ulang), tabel Rekap
+  // Mingguan/Ringkasan sebelumnya bisa "salah pegang" -- ia mengambil scan PERTAMA yang
+  // ditemukan, yang belum tentu scan yang admin isi rekapnya. Akibatnya admin sudah isi
+  // rekap (status "Sudah" muncul di daftar scan) tapi tabel rekapan tetap menghitung Alpa,
+  // karena yang dibaca tabel adalah scan duplikatnya yang lain, yang belum direkap.
+  // Sekarang begitu kelas dibuka, scan duplikat (matkulId+tanggal sama) digabung otomatis
+  // jadi 1 entri: entri yang SUDAH direkap dijadikan acuan (kalau lebih dari satu yang sudah
+  // direkap, dipakai yang paling terakhir diupload), rekap dari entri lain yang mungkin juga
+  // sudah diisi tetap digabung (union, prioritas ke entri acuan), lalu entri duplikatnya
+  // dihapus permanen dan disimpan ulang -- supaya tidak "salah pegang" lagi ke depannya.
+  if(!scansRes.error && !adaEditLokalSetelahFetch && state.scans.length){
+    const groups = new Map();
+    state.scans.forEach(s=>{
+      const key = s.matkulId+'|'+s.tanggal;
+      if(!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(s);
+    });
+    let adaDuplikat = false;
+    const scansTerpakai = [];
+    const rekapGabungan = { ...state.rekap };
+    groups.forEach(list=>{
+      if(list.length<=1){ scansTerpakai.push(list[0]); return; }
+      adaDuplikat = true;
+      // Urutkan: yang sudah direkap dulu, lalu yang paling baru diupload -- supaya acuan
+      // (canonical) yang dipilih adalah yang paling bisa dipercaya datanya.
+      const sorted = [...list].sort((a,b)=>{
+        if(!!b.direkap !== !!a.direkap) return (b.direkap?1:0) - (a.direkap?1:0);
+        return new Date(b.uploadedAt||0) - new Date(a.uploadedAt||0);
+      });
+      const canonical = { ...sorted[0] };
+      // Gabungkan rekap dari semua duplikat: acuan diprioritaskan, tapi kalau acuan belum
+      // punya jawaban untuk mahasiswa tertentu (atau belum direkap sama sekali), pakai
+      // jawaban dari duplikat lain yang kebetulan sudah diisi untuk mahasiswa itu.
+      const rekapTerpakai = {};
+      for(let i=sorted.length-1; i>=0; i--){
+        const r = state.rekap[sorted[i].id];
+        if(r) Object.assign(rekapTerpakai, r);
+      }
+      if(Object.keys(rekapTerpakai).length){
+        rekapGabungan[canonical.id] = rekapTerpakai;
+        canonical.direkap = true;
+      }
+      sorted.slice(1).forEach(dup=>{ delete rekapGabungan[dup.id]; });
+      scansTerpakai.push(canonical);
+    });
+    if(adaDuplikat){
+      state.scans = scansTerpakai;
+      state.rekap = rekapGabungan;
+      state.rekapDirtyAt = Date.now();
+      await saveScans();
+      await saveRekap();
+    }
+  }
+
   if(semStartRes.value){
     state.semesterStart = semStartRes.value;
   } else if(!semStartRes.error){
@@ -3811,7 +3866,7 @@ function renderWeeklyRecap(){
     const dateForDay = toISO(addDaysDate(monday, dIdx));
     const scheduled = state.matkul.filter(m=>hariArrayOf(m).includes(day));
     const scheduledIds = new Set(scheduled.map(m=>m.id));
-    const pengganti = state.matkul.filter(m=> !scheduledIds.has(m.id) && state.scans.some(s=>s.matkulId===m.id && s.tanggal===dateForDay));
+    const pengganti = state.matkul.filter(m=> !scheduledIds.has(m.id) && state.scans.some(s=>scanMatchesMatkul_(s, m) && s.tanggal===dateForDay));
     matkulByHari[day] = [...scheduled, ...pengganti];
   });
   const adaJadwal = state.matkul.some(m=>hariArrayOf(m).length);
@@ -3874,7 +3929,7 @@ function renderWeeklyRecap(){
       }
       const dateForDay = toISO(addDaysDate(monday, dIdx));
       list.forEach(mk=>{
-        const adaScanPengganti = state.scans.some(s=>s.matkulId===mk.id && s.tanggal===dateForDay);
+        const adaScanPengganti = state.scans.some(s=>scanMatchesMatkul_(s, mk) && s.tanggal===dateForDay);
         if(isLiburSesi(mk.id, dateForDay) && !adaScanPengganti){
           dayCells += `<td colspan="3" class="mono sia-cell" style="color:var(--ink-soft); font-style:italic; font-size:9px; white-space:nowrap;">Tidak ada pertemuan</td>`;
           return;
@@ -4765,12 +4820,40 @@ function weekMondayOf(weekNum, semesterStartStr){
 // mingguan yang sama di kedua kolom hari -- tiap kolom hari sekarang murni menunjukkan
 // status pada tanggal kolom itu saja. Tanggal yang belum terjadi (masih di masa depan)
 // selalu dianggap kosong (belum ada sesi), bukan Alpa.
+// Kalau ada lebih dari 1 scan untuk matkul+tanggal yang sama (mis. belum sempat digabung
+// oleh dedup di loadClass()), JANGAN asal ambil yang pertama ditemukan -- pilih yang SUDAH
+// direkap (kalau ada beberapa yang sudah direkap, pilih yang paling baru diupload). Ini supaya
+// status "Sudah" yang admin lihat di daftar scan selalu konsisten dengan yang dihitung di sini.
+//
+// PENYEBAB LAIN yang lebih sering terjadi daripada duplikat scan: mata kuliah (mk.id) pernah
+// diedit ulang (mis. dihapus lalu ditambah lagi karena salah ketik nama), sehingga id-nya
+// BERUBAH -- padahal scan lama yang sudah direkap masih menyimpan mk.id yang LAMA. Akibatnya
+// scan itu jadi "yatim": statusnya tetap tampil "Sudah" di daftar scan (karena daftar scan
+// hanya baca sc.direkap, tidak perlu mk.id cocok), TAPI tabel Rekap Mingguan gagal menemukan
+// scan itu lewat mk.id yang SEKARANG, sehingga sesi itu tetap dihitung Alpa penuh walau sudah
+// direkap. Untuk menutup celah ini, kalau tidak ketemu lewat matkulId, dicoba lagi mencari
+// lewat NAMA mata kuliah (sc.matkulNama, yang disimpan apa adanya di scan saat diupload dan
+// tidak pernah berubah walau mk.id-nya berubah).
+function scanMatchesMatkul_(s, mk){
+  if(s.matkulId===mk.id) return true;
+  if(!s.matkulNama || !mk.nama) return false;
+  return s.matkulNama.trim().toLowerCase()===mk.nama.trim().toLowerCase();
+}
+function findScanForSession_(mk, dateStr){
+  const matches = state.scans.filter(s=>scanMatchesMatkul_(s, mk) && s.tanggal===dateStr);
+  if(matches.length<=1) return matches[0];
+  const sorted = [...matches].sort((a,b)=>{
+    if(!!b.direkap !== !!a.direkap) return (b.direkap?1:0) - (a.direkap?1:0);
+    return new Date(b.uploadedAt||0) - new Date(a.uploadedAt||0);
+  });
+  return sorted[0];
+}
 function sessionStatusForDate(mk, dateStr, studentId){
   const jam = mk.jam||1;
   const d = parseISODate(dateStr);
   const dn = dayNameOfDate(d);
   const terjadwalHariItu = dn && hariArrayOf(mk).includes(dn);
-  const sc = state.scans.find(s=>s.matkulId===mk.id && s.tanggal===dateStr);
+  const sc = findScanForSession_(mk, dateStr);
   const sudahLewat = d <= todayDateCap();
   if(isLiburSesi(mk.id, dateStr) && !sc) return {S:0,I:0,A:0}; // ditandai dosen tidak masuk/libur -> tidak dihitung
   if(!terjadwalHariItu && !sc) return {S:0,I:0,A:0}; // tidak ada sesi sama sekali tanggal ini
@@ -4793,7 +4876,7 @@ function cumulativeSIA(uptoDate, matkulId, studentId){
   if(!mk) return {S,I,A};
   const jam = mk.jam||1;
   allSessionDatesForMatkul(mk, uptoDate).forEach(tanggal=>{
-    const sc = state.scans.find(s=>s.matkulId===matkulId && s.tanggal===tanggal);
+    const sc = findScanForSession_(mk, tanggal);
     if(isLiburSesi(matkulId, tanggal) && !sc) return; // Dosen Tidak Masuk & belum ada scan pengganti -> tidak dihitung S/I/A sama sekali
     if(!sc || !sc.direkap){
       // Belum diupload sama sekali, ATAU sudah diupload tapi admin belum mengisi rekap
@@ -5001,7 +5084,7 @@ function buildRekapMingguanBlocks_(weekNumbers){
       const dateForDay = toISO(addDaysDate(monday, dIdx));
       const scheduled = state.matkul.filter(m=>hariArrayOf(m).includes(day));
       const scheduledIds = new Set(scheduled.map(m=>m.id));
-      const pengganti = state.matkul.filter(m=> !scheduledIds.has(m.id) && state.scans.some(s=>s.matkulId===m.id && s.tanggal===dateForDay));
+      const pengganti = state.matkul.filter(m=> !scheduledIds.has(m.id) && state.scans.some(s=>scanMatchesMatkul_(s, m) && s.tanggal===dateForDay));
       matkulByHari[day] = [...scheduled, ...pengganti];
     });
 
@@ -5050,7 +5133,7 @@ function buildRekapMingguanBlocks_(weekNumbers){
       DAYS_ID.forEach((day,dIdx)=>{
         const dateForDay = toISO(addDaysDate(monday, dIdx));
         matkulByHari[day].forEach(mk=>{
-          const adaScanPengganti = state.scans.some(s=>s.matkulId===mk.id && s.tanggal===dateForDay);
+          const adaScanPengganti = state.scans.some(s=>scanMatchesMatkul_(s, mk) && s.tanggal===dateForDay);
           if(isLiburSesi(mk.id, dateForDay) && !adaScanPengganti){
             setCell(r,c2,'Tidak ada pertemuan'); mergeRange(r,c2,r,c2+2);
             c2+=3;

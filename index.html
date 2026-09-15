@@ -4307,7 +4307,12 @@ function renderModal(){
         if(!cocok){
           alert(`⚠️ Data di server TIDAK COCOK dengan yang barusan disimpan.\n\nYang tadi diminta (di form):\n${ringkasanDiminta}\n\nYang TERBACA di server sekarang:\n${ringkasanServer}\n\nCoba buka lagi "Edit rekap" sesi ini sesaat lagi.`);
         } else {
-          alert(`✅ Tersimpan & terkonfirmasi di server.\nStatus non-Hadir untuk sesi ini:\n${ringkasanDiminta}`);
+          // Sengaja TIDAK menampilkan alert sukses lagi supaya tidak mengganggu alur kerja --
+          // penyimpanan & verifikasi ke server tetap berjalan persis seperti sebelumnya di
+          // belakang layar (lihat kode di atas: safeSaveObject/safeSaveArray + baca-ulang
+          // safeGetRaw), jadi kalau memang gagal tersimpan atau datanya tidak cocok, admin
+          // TETAP akan diberi tahu lewat alert peringatan di atas/di bawah seperti biasa.
+          console.log('[Simpan Rekap] tersimpan & terkonfirmasi di server untuk sesi', scanId, ringkasanDiminta);
         }
       }catch(e2){ alert('Simpan sepertinya berhasil (server merespons OK), tapi verifikasi baca-ulang gagal karena: ' + (e2 && e2.message || e2) + '\n\nCoba cek lagi sesaat lagi.'); }
     });

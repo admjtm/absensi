@@ -3641,10 +3641,12 @@ function renderUpload(){
       <div class="scan-meta">
         <p class="mk">${escapeHtml(sc.matkulNama)}</p>
         <p class="dt">${formatDate(sc.tanggal)}</p>
-        <span class="stamp ${sc.flagSalah?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending')}">${sc.flagSalah?'Berkas tidak sesuai':(sc.direkap?'Sudah direkap':'Belum direkap')}</span>
+        <span class="stamp ${sc.flagSalah?'stamp-danger':(rekapNyambungKeRoster(sc)===false?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending'))}">${sc.flagSalah?'Berkas tidak sesuai':(rekapNyambungKeRoster(sc)===false?'Sudah, TAPI TIDAK SINKRON':(sc.direkap?'Sudah direkap':'Belum direkap'))}</span>
         ${sc.flagSalah ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(sc.flagNote||'Berkas yang diunggah tidak sesuai dengan mata kuliah ini.')}</div>` : ''}
+        ${!sc.flagSalah && rekapNyambungKeRoster(sc)===false ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>Rekap sesi ini sudah pernah diisi, tapi datanya tidak nyambung ke daftar mahasiswa yang sekarang (biasanya karena daftar mahasiswa sempat diedit/diimpor ulang). Klik "Edit rekap" dan isi ulang statusnya.</div>` : ''}
         <div class="scan-actions" style="margin-top:8px;">
           <button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat</button>
+          ${state.role==='admin' ? `<button class="btn ${rekapNyambungKeRoster(sc)===false?'btn-danger-ghost':'btn-primary'} btn-sm" data-open-rekap="${sc.id}">${sc.direkap?'Edit rekap':'Isi rekap'}</button>` : ''}
           ${state.role==='admin' ? `<button class="btn ${sc.flagSalah?'btn-ghost':'btn-danger-ghost'} btn-sm" data-flag-scan="${sc.id}">${sc.flagSalah?'Batalkan tanda':'Tandai salah matkul'}</button>` : ''}
           ${state.role==='admin' ? `<button class="btn btn-danger-ghost btn-sm" data-del-scan="${sc.id}">Hapus</button>` : ''}
         </div>
@@ -3678,6 +3680,12 @@ function renderRekap(){
   const done = state.scans.filter(s=>s.direkap).length;
   const pending = total-done;
   const missingCount = missingUploadSessions().length;
+  // Sesi yang sudah ditandai "Sudah direkap" tapi datanya tidak nyambung ke satupun mahasiswa
+  // yang aktif sekarang -- lihat rekapNyambungKeRoster(). Ini beda dari "Belum Direkap": dari
+  // luar KELIHATAN sudah beres (label "Sudah"), padahal tabel Rekap Mingguan tetap menghitung
+  // semua mahasiswa Alpa untuk sesi itu. Dihitung terpisah supaya kasus ini tidak "hilang"
+  // ketumpuk di antara sesi yang benar-benar sudah beres.
+  const orphanCount = state.scans.filter(s=> rekapNyambungKeRoster(s)===false).length;
 
   const stat = `
   <div class="stat-row">
@@ -3685,7 +3693,11 @@ function renderRekap(){
     <div class="stat-box"><div class="num">${done}</div><div class="lab">Sudah Direkap</div></div>
     <div class="stat-box"><div class="num">${pending}</div><div class="lab">Belum Direkap</div></div>
     <div class="stat-box"><div class="num">${missingCount}</div><div class="lab">Belum Diupload (otomatis Alpa)</div></div>
-  </div>`;
+    ${orphanCount ? `<div class="stat-box" style="border-color:var(--danger);"><div class="num" style="color:var(--danger);">${orphanCount}</div><div class="lab">Sudah Direkap TAPI Tidak Sinkron</div></div>` : ''}
+  </div>
+  ${orphanCount ? `<div class="note" style="border-left:3px solid var(--danger); background:#FDEEEC; margin-bottom:16px; padding:12px 14px;">
+    <strong>&#9888; ${orphanCount} sesi sudah ditandai "Sudah direkap" tapi datanya tidak nyambung ke daftar mahasiswa sekarang</strong> -- biasanya karena daftar mahasiswa sempat diedit/diimpor ulang setelah sesi itu direkap. Sesi ini tetap dihitung Alpa penuh di tabel di bawah walau labelnya "Sudah". Cari kartu/baris berlabel <strong>"TIDAK SINKRON"</strong> di bawah, lalu klik "Edit rekap" dan isi ulang statusnya.
+  </div>` : ''}`;
 
   const sortedAll = [...state.scans].sort((a,b)=> b.tanggal.localeCompare(a.tanggal));
 
@@ -3727,12 +3739,13 @@ function renderRekap(){
       <td>${formatDate(sc.tanggal)}</td>
       <td>${escapeHtml(sc.matkulNama)}</td>
       <td>
-        <span class="stamp ${sc.flagSalah?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending')}">${sc.flagSalah?'Berkas tidak sesuai':(sc.direkap?'Sudah':'Belum')}</span>
+        <span class="stamp ${sc.flagSalah?'stamp-danger':(rekapNyambungKeRoster(sc)===false?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending'))}">${sc.flagSalah?'Berkas tidak sesuai':(rekapNyambungKeRoster(sc)===false?'Sudah, TIDAK SINKRON':(sc.direkap?'Sudah':'Belum'))}</span>
         ${sc.flagSalah ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(sc.flagNote||'Berkas yang diunggah tidak sesuai dengan mata kuliah ini.')}</div>` : ''}
+        ${!sc.flagSalah && rekapNyambungKeRoster(sc)===false ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>Rekap sudah pernah diisi tapi tidak nyambung ke daftar mahasiswa sekarang. Klik "Edit rekap" dan isi ulang.</div>` : ''}
       </td>
       <td>
         <button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat scan</button>
-        ${state.role==='admin' ? `<button class="btn btn-primary btn-sm" data-open-rekap="${sc.id}">${sc.direkap?'Edit rekap':'Isi rekap'}</button>` : ''}
+        ${state.role==='admin' ? `<button class="btn ${rekapNyambungKeRoster(sc)===false?'btn-danger-ghost':'btn-primary'} btn-sm" data-open-rekap="${sc.id}">${sc.direkap?'Edit rekap':'Isi rekap'}</button>` : ''}
         ${state.role==='admin' ? `<button class="btn ${sc.flagSalah?'btn-ghost':'btn-danger-ghost'} btn-sm" data-flag-scan="${sc.id}">${sc.flagSalah?'Batalkan tanda':'Tandai salah matkul'}</button>` : ''}
       </td>
     </tr>`).join('');
@@ -4011,7 +4024,8 @@ function renderWeeklyRecap(){
     </div>
     ${!adaJadwal ? `<div class="note">Belum ada mata kuliah yang diatur "Hari"-nya di tab "Mata Kuliah" &mdash; kolom per mata kuliah belum bisa ditampilkan.</div>` : ''}
     <div style="margin-bottom:14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-      <button class="btn btn-ghost btn-sm" id="exportWeekExcelBtn" ${!state.students.length ? 'disabled' : ''}>&#8595; Download Excel (Minggu ${week} ini)</button>
+      <button class="btn btn-ghost btn-sm" id="exportWeekExcelBtn" ${!state.students.length ? 'disabled' : ''}>&#8595; Download Excel (Minggu ${week===1?'1':'1&ndash;'+week})</button>
+      <span style="align-self:center; font-size:12.5px; color:var(--ink-soft);">${week===1 ? '' : `File berisi rekap Minggu 1 sampai Minggu ${week} (bertumpuk dalam satu sheet).`}</span>
       ${state.role==='admin' ? `<button class="btn btn-primary btn-sm" id="bulkMarkWeekHadirBtn" ${!state.students.length ? 'disabled' : ''}>&#10003; Tandai Hadir Semua (Minggu ${week} ini)</button>` : ''}
       ${state.role==='admin' && state.lastBulkHadir && state.lastBulkHadir.week===week ? `<button class="btn btn-ghost btn-sm" id="undoBulkMarkWeekHadirBtn" style="color:var(--danger); border-color:var(--danger);">&#8617; Urungkan Tandai Hadir Semua</button>` : ''}
       <div style="display:flex; align-items:center; gap:4px; border:1px solid var(--line-strong); border-radius:8px; padding:2px;">
@@ -4912,6 +4926,22 @@ function findScanForSession_(mk, dateStr){
   });
   return sorted[0];
 }
+// Deteksi rekap yang "yatim" (tidak nyambung ke mahasiswa yang sekarang) -- ini penyebab
+// paling sering kenapa satu sesi sudah ditandai "Sudah direkap" tapi tabel Rekap Mingguan
+// tetap menghitung SEMUA mahasiswa Alpa. Biasanya terjadi kalau daftar mahasiswa (roster)
+// diedit ulang/diimpor ulang SETELAH sesi ini direkap, sehingga ID mahasiswa yang tersimpan
+// di dalam rekap sudah tidak ada satupun yang cocok dengan ID mahasiswa yang aktif sekarang.
+// Return: true = rekap ADA dan nyambung ke minimal 1 mahasiswa aktif (normal).
+//         false = sc.direkap true tapi rekapnya kosong/tidak nyambung ke satupun mahasiswa
+//                 aktif sekarang -> kemungkinan besar "yatim", perlu diisi ulang.
+//         null = tidak relevan (sesi ini memang belum direkap sama sekali).
+function rekapNyambungKeRoster(sc){
+  if(!sc || !sc.direkap) return null;
+  if(!state.students.length) return null; // tidak ada mahasiswa untuk dibandingkan -> jangan asal vonis
+  const r = state.rekap[sc.id];
+  if(!r || !Object.keys(r).length) return false;
+  return state.students.some(st=> Object.prototype.hasOwnProperty.call(r, st.id));
+}
 function sessionStatusForDate(mk, dateStr, studentId){
   const jam = mk.jam||1;
   const d = parseISODate(dateStr);
@@ -5105,15 +5135,19 @@ function exportOfficialExcel(){
   XLSX.writeFile(wb, fname);
 }
 
-// Download Excel untuk SATU minggu saja -- persis dengan tabel "Rekap Absensi per Minggu"
-// yang sedang tampil di layar (minggu yang lagi dipilih di dropdown).
+// Download Excel untuk minggu yang dipilih -- SEKARANG KUMULATIF: kalau yang dipilih Minggu 2,
+// yang ikut terunduh adalah blok Minggu 1 DAN Minggu 2 (bertumpuk di sheet yang sama); kalau
+// yang dipilih Minggu 8, yang terunduh blok Minggu 1 sampai Minggu 8. Ini supaya sekali download
+// langsung dapat rekapan dari awal semester sampai minggu yang lagi dilihat, tidak perlu
+// download satu-satu per minggu lalu digabung manual.
 function exportWeeklyExcelOne_(){
   if(typeof XLSX==='undefined'){ alert('Modul Excel belum siap, coba lagi sesaat.'); return; }
   if(!state.semesterStart){ alert('Atur Tanggal Mulai Semester dulu di tab Mata Kuliah.'); return; }
   if(!state.students.length){ alert('Belum ada data mahasiswa.'); return; }
   const week = state.summaryWeek || 1;
+  const weekNumbers = Array.from({length:week}, (_,i)=>i+1); // 1..week, kumulatif
 
-  const { data, merges } = buildRekapMingguanBlocks_([week]);
+  const { data, merges } = buildRekapMingguanBlocks_(weekNumbers);
 
   const ws = XLSX.utils.aoa_to_sheet(data);
   ws['!merges'] = merges;
@@ -5121,7 +5155,7 @@ function exportWeeklyExcelOne_(){
   const wb = XLSX.utils.book_new();
   const sheetName = (state.kelas||'Kelas').slice(0,31);
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  const fname = `Rekap_Minggu${week}_${state.prodi}_${state.kelas}.xlsx`;
+  const fname = week===1 ? `Rekap_Minggu1_${state.prodi}_${state.kelas}.xlsx` : `Rekap_Minggu1-${week}_${state.prodi}_${state.kelas}.xlsx`;
   XLSX.writeFile(wb, fname);
 }
 

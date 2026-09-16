@@ -3531,14 +3531,20 @@ function renderUpload(){
   const missing = missingUploadSessions();
   const missingBanner = missing.length ? `
     <div class="note" style="border-left:3px solid var(--danger); background:#FDEEEC; margin-bottom:16px; padding:12px 14px;">
-      <strong>&#9888; ${missing.length} sesi belum diupload</strong> -- otomatis dihitung <strong>Alpa (A)</strong> untuk SEMUA mahasiswa di tab Rekap sampai scan-nya diunggah. Kalau ternyata dosennya yang tidak masuk (bukan lupa upload), klik "Tandai" supaya tidak dihitung Alpa:
-      <ul style="margin:8px 0 0; padding-left:18px; list-style:none;">
-        ${missing.slice(0,8).map(m=>`<li style="margin-bottom:4px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+      <strong>&#9888; ${missing.length} sesi belum diupload</strong> -- otomatis dihitung <strong>Alpa (A)</strong> untuk SEMUA mahasiswa di tab Rekap sampai scan-nya diunggah. Kalau ternyata dosennya yang tidak masuk (bukan lupa upload), centang sesi yang sesuai lalu klik "Tandai dosen tidak masuk", atau tandai satu-satu:
+      ${state.role==='admin' ? `<label style="display:flex; align-items:center; gap:6px; margin:10px 0 4px; font-weight:600; cursor:pointer;">
+        <input type="checkbox" id="missingSelectAll"> Pilih semua (${missing.length})
+      </label>` : ''}
+      <ul style="margin:4px 0 0; padding-left:18px; list-style:none; ${missing.length>8?'max-height:260px; overflow-y:auto;':''}">
+        ${missing.map(m=>`<li style="margin-bottom:4px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          ${state.role==='admin' ? `<input type="checkbox" class="missing-check" data-matkul-id="${m.matkulId}" data-matkul-nama="${escapeHtml(m.matkulNama)}" data-tanggal="${m.tanggal}">` : ''}
           <span>${escapeHtml(m.matkulNama)} &mdash; ${formatDate(m.tanggal)}</span>
           <button type="button" class="btn btn-ghost btn-sm" data-quick-libur="${m.matkulId}" data-quick-libur-tanggal="${m.tanggal}">Tandai dosen tidak masuk</button>
         </li>`).join('')}
-        ${missing.length>8 ? `<li>...dan ${missing.length-8} sesi lainnya</li>` : ''}
       </ul>
+      ${state.role==='admin' ? `<div style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="btn btn-primary btn-sm" id="bulkLiburSelectedBtn" disabled>Tandai dosen tidak masuk untuk sesi terpilih (<span id="missingSelectedCount">0</span>)</button>
+      </div>` : ''}
     </div>` : '';
 
   // Form untuk menandai 1 sesi (matkul + tanggal) sebagai "TIDAK ADA KULIAH" (mis. dosen
@@ -4689,6 +4695,45 @@ function attachHandlers(){
     const form = document.getElementById('liburForm');
     if(form) form.scrollIntoView({behavior:'smooth', block:'center'});
   }));
+  // Tools admin untuk "menghilangkan" banyak status "belum diupload" sekaligus, tanpa harus
+  // buka form satu-satu per sesi -- admin centang sesi mana saja yang memang dosennya tidak
+  // masuk (bukan lupa upload), lalu satu klik langsung menandai semuanya jadi "tidak ada kuliah".
+  const missingChecks = document.querySelectorAll('.missing-check');
+  const missingCountEl = document.getElementById('missingSelectedCount');
+  const bulkLiburBtn = document.getElementById('bulkLiburSelectedBtn');
+  function refreshMissingSelectedCount(){
+    const n = document.querySelectorAll('.missing-check:checked').length;
+    if(missingCountEl) missingCountEl.textContent = String(n);
+    if(bulkLiburBtn) bulkLiburBtn.disabled = n===0;
+  }
+  missingChecks.forEach(cb=> cb.addEventListener('change', ()=>{
+    const selectAll = document.getElementById('missingSelectAll');
+    if(selectAll && !cb.checked) selectAll.checked = false;
+    refreshMissingSelectedCount();
+  }));
+  const missingSelectAll = document.getElementById('missingSelectAll');
+  if(missingSelectAll) missingSelectAll.addEventListener('change', ()=>{
+    document.querySelectorAll('.missing-check').forEach(cb=> cb.checked = missingSelectAll.checked);
+    refreshMissingSelectedCount();
+  });
+  if(bulkLiburBtn) bulkLiburBtn.addEventListener('click', ()=>{
+    const checked = [...document.querySelectorAll('.missing-check:checked')];
+    if(!checked.length) return;
+    if(!confirm(`Tandai ${checked.length} sesi terpilih sebagai "dosen tidak masuk"? Sesi ini tidak akan dihitung Alpa lagi.`)) return;
+    const newEntries = [];
+    checked.forEach(cb=>{
+      const matkulId = cb.dataset.matkulId, tanggal = cb.dataset.tanggal, matkulNama = cb.dataset.matkulNama;
+      if(state.libur.some(l=>l.matkulId===matkulId && l.tanggal===tanggal)) return; // sudah ditandai, lewati
+      newEntries.push({ id:uid(), matkulId, matkulNama, tanggal, keterangan:'', markedAt:new Date().toISOString() });
+    });
+    if(!newEntries.length){ render(); return; }
+    state.libur.push(...newEntries);
+    render();
+    safeSaveArray('libur:'+keyBase(), 'libur', latest=>{
+      newEntries.forEach(ne=>{ if(!latest.some(l=>l.id===ne.id)) latest.push(ne); });
+      return latest;
+    });
+  });
   document.querySelectorAll('[data-del-libur]').forEach(b=> b.addEventListener('click', ()=>{
     if(!confirm('Batalkan tanda "tidak ada kuliah" untuk sesi ini? Sesi akan kembali dihitung normal (Alpa kalau belum ada scan).')) return;
     const delId = b.dataset.delLibur;
@@ -4866,7 +4911,12 @@ function missingUploadSessions(){
   state.matkul.forEach(mk=>{
     expectedSessionDatesForMatkul(mk, cap).forEach(tanggal=>{
       if(isLiburSesi(mk.id, tanggal)) return; // sudah ditandai dosen tidak masuk/libur, tidak perlu upload
-      const ada = state.scans.some(s=>s.matkulId===mk.id && s.tanggal===tanggal);
+      // PENTING: cocokkan lewat ID *atau* NAMA mata kuliah (scanMatchesMatkul_), BUKAN cuma ID
+      // mentah seperti sebelumnya. Kalau mata kuliah pernah diedit ulang (dihapus lalu ditambah
+      // lagi) ID-nya berubah, padahal scan lama masih tersimpan dengan ID lama -- tanpa fallback
+      // nama, sesi yang SUDAH diupload & SUDAH direkap tetap dianggap "belum diupload" di sini,
+      // padahal di kartu/tabel lain (yang sudah pakai scanMatchesMatkul_) sudah kelihatan beres.
+      const ada = state.scans.some(s=> scanMatchesMatkul_(s, mk) && s.tanggal===tanggal);
       if(!ada) missing.push({ matkulId:mk.id, matkulNama:mk.nama, tanggal });
     });
   });

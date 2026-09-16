@@ -2585,6 +2585,7 @@ let state = {
                       // diset, default ke minggu berjalan (dulu defaultnya selalu "Minggu 1" secara
                       // terpisah, itu sebabnya dua panel ini bisa menunjukkan minggu yang berbeda).
   scanListWeek: null, // minggu yang sedang ditampilkan di "Daftar Scan" (null = belum diset, default ke minggu berjalan)
+  uploadGridWeek: null, // minggu yang sedang ditampilkan di grid kartu tab "Upload Absensi" (null = belum diset, default ke minggu berjalan)
   rekapZoom: 1, // level zoom tabel "Rekap Absensi per Minggu" (1 = 100%, di-reset tiap reload halaman)
   semesterStart: null, // 'YYYY-MM-DD', tanggal Senin minggu pertama semester (per kelas)
   notifications: [], // riwayat notifikasi upload untuk Admin: {id, prodi, kelas, matkul, tanggalKuliah, timestamp, read}
@@ -3600,7 +3601,40 @@ function renderUpload(){
     ${!state.matkul.length ? '<div class="note">Tambahkan mata kuliah dulu di tab "Mata Kuliah" sebelum bisa upload scan.</div>' : ''}
   `;
 
-  const sorted = [...state.scans].sort((a,b)=> b.tanggal.localeCompare(a.tanggal));
+  const sortedAllScans = [...state.scans].sort((a,b)=> b.tanggal.localeCompare(a.tanggal));
+
+  // Grid kartu di bawah difilter PER MINGGU (default: minggu berjalan) supaya tidak makin
+  // panjang & bikin scroll makin jauh setiap ada scan baru diupload -- sebelumnya SEMUA scan
+  // dari awal semester ditumpuk di satu grid panjang. Kalau Tanggal Mulai Semester belum
+  // diatur, filter minggu ini tidak bisa dihitung -> tampilkan semua seperti sebelumnya (fallback).
+  const curWeekForUploadGrid = state.semesterStart ? (weekIndexForDate(todayStr(), state.semesterStart) || 1) : null;
+  if(state.semesterStart){
+    if(!state.uploadGridWeek || state.uploadGridWeek<1 || state.uploadGridWeek>TOTAL_WEEKS){
+      state.uploadGridWeek = Math.min(Math.max(curWeekForUploadGrid,1), TOTAL_WEEKS);
+    }
+  }
+  const uploadGridWeek = state.uploadGridWeek || 1;
+  let sorted = sortedAllScans;
+  let uploadGridWeekNavHtml = '';
+  if(state.semesterStart){
+    const monday = weekMondayOf(uploadGridWeek, state.semesterStart);
+    const saturday = addDaysDate(monday, 5);
+    const mondayISO = toISO(monday), saturdayISO = toISO(saturday);
+    sorted = sortedAllScans.filter(sc=> sc.tanggal>=mondayISO && sc.tanggal<=saturdayISO);
+    const uploadGridWeekOptions = Array.from({length:TOTAL_WEEKS}, (_,i)=>i+1).map(w=>{
+      const mon = weekMondayOf(w, state.semesterStart);
+      const sat = addDaysDate(mon,5);
+      return `<option value="${w}" ${w===uploadGridWeek?'selected':''}>Minggu ${w} (${fmtDDMMYYYY(mon)} &ndash; ${fmtDDMMYYYY(sat)})</option>`;
+    }).join('');
+    uploadGridWeekNavHtml = `
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:4px 0 4px;">
+      <button class="btn btn-ghost btn-sm" id="uploadGridWeekPrev" title="Minggu sebelumnya">&larr; Minggu sebelumnya</button>
+      <select id="uploadGridWeekSelect" style="flex:1 1 220px; min-width:180px;">${uploadGridWeekOptions}</select>
+      <button class="btn btn-ghost btn-sm" id="uploadGridWeekNext" title="Minggu berikutnya">Minggu berikutnya &rarr;</button>
+      ${uploadGridWeek!==curWeekForUploadGrid ? `<button class="btn btn-ghost btn-sm" id="uploadGridWeekToday">Minggu berjalan</button>` : ''}
+    </div>`;
+  }
+
   const cards = sorted.map(sc=>`
     <div class="scan-card">
       <img class="scan-thumb" src="${sc.dataUrl}" data-view-image="${sc.id}" alt="Scan absensi ${escapeHtml(sc.matkulNama)}">
@@ -3627,11 +3661,12 @@ function renderUpload(){
     </div>
     ${missingBanner}
     ${uploadForm}
+    ${uploadGridWeekNavHtml}
     ${sorted.length ? `<div class="scan-grid">${cards}</div>` : `
       <div class="empty-state">
         <div class="glyph">&#128247;</div>
-        <h3>Belum ada scan diunggah</h3>
-        <p>Admin dan Ketua Kelas dapat mengunggah scan absensi lewat form di atas.</p>
+        <h3>${sortedAllScans.length ? 'Tidak ada scan di minggu ini' : 'Belum ada scan diunggah'}</h3>
+        <p>${sortedAllScans.length ? 'Pilih minggu lain lewat dropdown di atas untuk melihat riwayat scan minggu tersebut.' : 'Admin dan Ketua Kelas dapat mengunggah scan absensi lewat form di atas.'}</p>
       </div>`}
   </div>
   ${liburPanel}`;
@@ -4683,6 +4718,30 @@ function attachHandlers(){
   const scanListWeekToday = document.getElementById('scanListWeekToday');
   if(scanListWeekToday) scanListWeekToday.addEventListener('click', ()=>{
     setActiveWeek(state.semesterStart ? (weekIndexForDate(todayStr(), state.semesterStart) || 1) : 1);
+  });
+  // Navigasi minggu untuk grid kartu di tab "Upload Absensi" -- state.uploadGridWeek dibuat
+  // TERPISAH dari state.scanListWeek/summaryWeek (tidak lewat setActiveWeek) karena tab Upload
+  // Absensi biasanya dipakai untuk mengunggah scan hari itu juga, jadi wajar kalau minggu yang
+  // sedang dilihat di sini tidak selalu sama dengan minggu yang sedang dilihat di tab Rekap.
+  const uploadGridWeekSelect = document.getElementById('uploadGridWeekSelect');
+  if(uploadGridWeekSelect) uploadGridWeekSelect.addEventListener('change', ()=>{
+    state.uploadGridWeek = parseInt(uploadGridWeekSelect.value,10);
+    render();
+  });
+  const uploadGridWeekPrev = document.getElementById('uploadGridWeekPrev');
+  if(uploadGridWeekPrev) uploadGridWeekPrev.addEventListener('click', ()=>{
+    state.uploadGridWeek = Math.max(1, (state.uploadGridWeek||1)-1);
+    render();
+  });
+  const uploadGridWeekNext = document.getElementById('uploadGridWeekNext');
+  if(uploadGridWeekNext) uploadGridWeekNext.addEventListener('click', ()=>{
+    state.uploadGridWeek = Math.min(TOTAL_WEEKS, (state.uploadGridWeek||1)+1);
+    render();
+  });
+  const uploadGridWeekToday = document.getElementById('uploadGridWeekToday');
+  if(uploadGridWeekToday) uploadGridWeekToday.addEventListener('click', ()=>{
+    state.uploadGridWeek = state.semesterStart ? (weekIndexForDate(todayStr(), state.semesterStart) || 1) : 1;
+    render();
   });
   const exportExcelBtn = document.getElementById('exportExcelBtn');
   if(exportExcelBtn) exportExcelBtn.addEventListener('click', exportOfficialExcel);

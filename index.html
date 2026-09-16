@@ -3561,8 +3561,8 @@ function renderUpload(){
         </select>
       </div>
       <div class="field"><label>Tanggal</label><input type="date" name="tanggal" id="liburTanggalInput" required value="${todayStr()}"></div>
-      <div class="field" style="flex:1; min-width:220px;"><label>Keterangan (opsional)</label><input name="keterangan" placeholder="Contoh: Dosen tidak masuk, tidak ada pengganti"></div>
-      <button class="btn btn-primary" type="submit" ${state.matkul.length?'':'disabled'}>Tandai Tidak Ada Kuliah</button>
+      <div class="field" style="flex:1; min-width:220px;"><label>Keterangan (opsional)</label><input name="keterangan" placeholder="Contoh: Dosen tidak masuk / Kuliah online, tidak ada pengganti"></div>
+      <button class="btn btn-primary" type="submit" ${state.matkul.length?'':'disabled'}>Tandai Sesi Ini</button>
     </form>
   `;
   const liburRows = liburSorted.map(l=>`
@@ -3576,8 +3576,8 @@ function renderUpload(){
   <div class="panel">
     <div class="panel-head">
       <div>
-        <h2>Dosen Tidak Masuk / Tidak Ada Kuliah</h2>
-        <p>Kalau dosen tidak masuk sehingga lembar absensi tidak sempat diisi hari itu, tandai sesinya di sini -- sesi ini akan DIKECUALIKAN dari perhitungan Alpa untuk semua mahasiswa di tab Rekap. Jangan ditandai kalau kuliahnya tetap berlangsung, cukup upload scan seperti biasa.</p>
+        <h2>Dosen Tidak Masuk / Tidak Ada Kuliah / Kuliah Online</h2>
+        <p>Kalau dosen tidak masuk, kuliah tidak berlangsung, atau kuliahnya diadakan online (jadi tidak ada lembar absensi kertas untuk diupload), tandai sesinya di sini -- sesi ini akan DIKECUALIKAN dari perhitungan Alpa untuk semua mahasiswa di tab Rekap. Jangan ditandai kalau kuliahnya tetap berlangsung tatap muka, cukup upload scan seperti biasa.</p>
       </div>
     </div>
     ${liburForm}

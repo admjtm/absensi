@@ -3745,7 +3745,7 @@ function renderRekap(){
       <td>${formatDate(sc.tanggal)}</td>
       <td>${escapeHtml(sc.matkulNama)}</td>
       <td>
-        <span class="stamp ${sc.flagSalah?'stamp-danger':(rekapNyambungKeRoster(sc)===false?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending'))}">${sc.flagSalah?'Berkas tidak sesuai':(rekapNyambungKeRoster(sc)===false?'Sudah, TIDAK SINKRON':(sc.direkap?'Sudah':'Belum'))}</span>
+        <span class="stamp ${sc.flagSalah?'stamp-danger':(rekapNyambungKeRoster(sc)===false?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending'))}">${sc.flagSalah?'Berkas tidak sesuai':(rekapNyambungKeRoster(sc)===false?'Sudah Direkap, TIDAK SINKRON':(sc.direkap?'Sudah Direkap':'Sedang Direkap'))}</span>
         ${sc.flagSalah ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(sc.flagNote||'Berkas yang diunggah tidak sesuai dengan mata kuliah ini.')}</div>` : ''}
         ${!sc.flagSalah && rekapNyambungKeRoster(sc)===false ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>Rekap sudah pernah diisi tapi tidak nyambung ke daftar mahasiswa sekarang. Klik "Edit rekap" dan isi ulang.</div>` : ''}
       </td>

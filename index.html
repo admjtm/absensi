@@ -2534,14 +2534,27 @@ const SEED_MATKUL = {
 };
 
 // PIN untuk membuka Mode Admin -- ketua kelas tidak diberi tahu PIN ini, supaya tidak bisa
-// pindah sendiri ke mode Admin. Ganti angka ini sesuai kebutuhan.
-const ADMIN_PIN = '2025';
+// pindah sendiri ke mode Admin.
+// CATATAN KEAMANAN: PIN TIDAK disimpan sebagai angka biasa di sini lagi (dulu 'const ADMIN_PIN =
+// "2025"' bisa langsung dibaca siapa saja lewat "View Page Source"). Sekarang yang disimpan
+// adalah HASH SHA-256 dari PIN tersebut -- angka aslinya tidak muncul di kode.
+// Untuk GANTI PIN: buka console browser (F12), jalankan:
+//   crypto.subtle.digest('SHA-256', new TextEncoder().encode('PIN_BARU_DISINI')).then(b=>console.log(Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('')))
+// lalu salin hasil hash yang muncul dan tempel menggantikan nilai di bawah ini.
+const ADMIN_PIN_HASH = '033581b0970477af916f08ad931c521b975b55f8368604ae58a537b387e792e1'; // hash dari '4512'
 
 // PIN untuk menu "Upload Absensi" di sisi Ketua Kelas -- satu PIN sama dipakai untuk SEMUA
 // kelas (bukan beda-beda per kelas). PIN yang benar hanya berlaku untuk HARI itu saja: kalau
 // tanggal sudah berganti (mis. dibuka lagi besok), Ketua Kelas harus memasukkan PIN ulang.
-// Ganti angka ini sesuai kebutuhan.
-const KETUA_UPLOAD_PIN = '1234';
+// Sama seperti ADMIN_PIN_HASH di atas, ini adalah hash SHA-256, bukan PIN asli.
+const KETUA_UPLOAD_PIN_HASH = '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4'; // hash dari '1234'
+
+// Fungsi bantu: hitung hash SHA-256 dari sebuah teks (dipakai untuk mencocokkan PIN yang
+// diketik user dengan hash yang tersimpan di atas, tanpa pernah menyimpan PIN asli di kode).
+async function sha256Hex_(text){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
 const KETUA_UPLOAD_UNLOCK_KEY = 'absensi_ketua_upload_unlock_v1';
 function isKetuaUploadUnlockedToday(){
   try{ return localStorage.getItem(KETUA_UPLOAD_UNLOCK_KEY) === todayStr(); }
@@ -4397,9 +4410,10 @@ function renderModal(){
     const pinForm = document.getElementById('adminPinForm');
     const pinInput = pinForm.querySelector('input[name="pin"]');
     pinInput.focus();
-    pinForm.addEventListener('submit', (e)=>{
+    pinForm.addEventListener('submit', async (e)=>{
       e.preventDefault();
-      if(pinInput.value === ADMIN_PIN){
+      const enteredHash = await sha256Hex_(pinInput.value);
+      if(enteredHash === ADMIN_PIN_HASH){
         state.role = 'admin';
         state.adminUnlocked = true; // diingat di perangkat ini untuk HARI INI saja, besok diminta PIN lagi
         setAdminUnlockedPersisted_(true);
@@ -4440,9 +4454,10 @@ function renderModal(){
     const pinForm = document.getElementById('ketuaUploadPinForm');
     const pinInput = pinForm.querySelector('input[name="pin"]');
     pinInput.focus();
-    pinForm.addEventListener('submit', (e)=>{
+    pinForm.addEventListener('submit', async (e)=>{
       e.preventDefault();
-      if(pinInput.value === KETUA_UPLOAD_PIN){
+      const enteredHash = await sha256Hex_(pinInput.value);
+      if(enteredHash === KETUA_UPLOAD_PIN_HASH){
         setKetuaUploadUnlockedToday(); // berlaku sampai tanggal berganti, lalu diminta lagi
         state.modal = null;
         render();

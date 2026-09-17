@@ -374,6 +374,30 @@
   .status-opt input:checked + span.A{background:#FAE7E5; border-color:var(--danger); color:var(--danger);}
   .status-opt input:focus-visible + span{outline:2px solid var(--primary-light); outline-offset:1px;}
 
+  /* ---------- Tab Statistik: tabel ceklis upload/rekap per minggu ---------- */
+  .statistik-table{border-collapse:collapse; width:100%; font-size:11.5px;}
+  .statistik-table th,.statistik-table td{border:1px solid var(--line-strong);}
+  .statistik-table thead th{
+    background:var(--paper); color:var(--ink); font-size:10.5px; font-weight:700;
+    padding:7px 6px; text-align:center; white-space:nowrap; position:sticky; top:0;
+  }
+  .statistik-table thead th:first-child, .statistik-kelas-cell{
+    position:sticky; left:0; z-index:2; background:var(--surface);
+  }
+  .statistik-table thead th:first-child{ z-index:3; text-align:left; padding-left:10px; }
+  .statistik-kelas-cell{padding:7px 10px; white-space:nowrap; font-size:12px;}
+  .statistik-table tbody tr:nth-child(even) .statistik-kelas-cell{background:#FAFBFC;}
+  .statistik-cell{padding:4px; text-align:center; vertical-align:middle;}
+  .statistik-cell-inner{display:flex; flex-direction:column; gap:2px; align-items:center;}
+  .stat-chip{
+    display:inline-block; font-size:9.5px; font-weight:700; font-family:'IBM Plex Mono';
+    padding:2px 5px; border-radius:5px; border:1px solid var(--line-strong); color:var(--ink-soft);
+    letter-spacing:.02em; white-space:nowrap;
+  }
+  .stat-chip.stat-ok{background:#E4F3EE; border-color:var(--success); color:var(--success);}
+  .stat-chip.stat-no{background:#FAE7E5; border-color:var(--danger); color:var(--danger);}
+  .stat-chip.stat-na{background:var(--paper); border-color:var(--line-strong); color:var(--ink-soft);}
+
   /* ---------- Hari checkbox "chips" (multi-pilih) ---------- */
   .hari-group{display:flex; flex-wrap:wrap; gap:8px 8px;}
   .hari-opt{position:relative; display:inline-flex;}
@@ -2608,6 +2632,10 @@ let state = {
                     // supaya mahasiswa yang baru saja ditambah/dihapus/diedit TIDAK ditimpa balik
                     // oleh loadClass() yang masih mengambil data lama di belakang layar.
   matkulDirtyAt: 0, // sama seperti rosterDirtyAt, tapi untuk daftar mata kuliah (state.matkul).
+  statistik: { prodiKey:null, loading:false, data:null, error:null }, // cache tab Statistik --
+    // { prodiKey: prodi yg terakhir diambil datanya, loading, data: [{kelas,matkul,scans,rekap,
+    // libur,semesterStart}, ...] per kelas di prodi itu, error }. Diambil ulang otomatis kalau
+    // admin/ketua pindah tab program studi (lihat renderStatistik).
 };
 
 function currentProdi(){ return PRODI.find(p=>p.key===state.prodi); }
@@ -3331,10 +3359,11 @@ function renderTabnav(){
     {id:'matkul', label:'Mata Kuliah'},
     {id:'upload', label:'Upload Absensi'},
     {id:'rekap', label:'Rekap Kehadiran'},
+    {id:'statistik', label:'Statistik'},
   ];
-  // Ketua kelas hanya boleh mengunggah scan absensi dan melihat rekapan --
+  // Ketua kelas hanya boleh mengunggah scan absensi dan melihat rekapan/statistik --
   // tidak boleh mengubah data mahasiswa maupun mata kuliah (itu wewenang Admin).
-  const tabs = state.role==='ketua' ? allTabs.filter(t=>t.id==='upload'||t.id==='rekap') : allTabs;
+  const tabs = state.role==='ketua' ? allTabs.filter(t=>t.id==='upload'||t.id==='rekap'||t.id==='statistik') : allTabs;
   return `<div class="tabnav">
     ${tabs.map(t=>`<button class="${state.tab===t.id?'active':''}" data-tab="${t.id}">${t.label}</button>`).join('')}
   </div>`;
@@ -3357,6 +3386,7 @@ function renderTabContent(){
     return renderUpload();
   }
   if(state.tab==='rekap') return renderRekap();
+  if(state.tab==='statistik') return renderStatistik();
   return '';
 }
 
@@ -3678,6 +3708,156 @@ function renderUpload(){
       </div>`}
   </div>
   ${liburPanel}`;
+}
+
+/* ---- Statistik (ceklis upload & rekap per minggu, semua kelas dalam 1 prodi) ---- */
+const STATISTIK_TOTAL_MINGGU = 18;
+
+// Ambil data (matkul, scans, rekap, libur, semesterStart) utk SEMUA kelas dalam 1 prodi
+// sekaligus -- dipakai khusus tab Statistik, TANPA mengubah state.kelas/state.matkul yang
+// sedang aktif di layar (supaya admin/ketua tidak perlu pindah2 kelas manual satu-per-satu
+// hanya utk lihat rekap mana yang masih bolong). Menggunakan batchGetClassData_ yang sama
+// dipakai loadClass(), dijalankan paralel (Promise.all) utk semua kelas prodi ini.
+async function loadStatistikData(prodiKey){
+  const prodi = PRODI.find(p=>p.key===prodiKey);
+  if(!prodi) return [];
+  return Promise.all(prodi.kelas.map(async kelas=>{
+    const base = prodiKey+':'+kelas;
+    const [/*roster*/, matkulRes, scansRes, rekapRes, semStartRes, liburRes] = await batchGetClassData_(base);
+    let matkul = matkulRes.value;
+    if(!matkul){
+      // Kelas ini belum pernah dibuka sama sekali (belum ada data matkul tersimpan) --
+      // pakai bawaan SEED_MATKUL supaya jadwalnya tetap kelihatan, sama seperti loadClass().
+      matkul = SEED_MATKUL[base] ? SEED_MATKUL[base].map(m=>({ id:uid(), nama:m.nama, jam:m.jam, hari: m.hari?[m.hari]:[] })) : [];
+    }
+    matkul.forEach(m=>{ m.hari = hariArrayOf(m); });
+    return {
+      kelas,
+      matkul,
+      scans: scansRes.value || [],
+      rekap: rekapRes.value || {},
+      libur: liburRes.value || [],
+      semesterStart: semStartRes.value || DEFAULT_SEMESTER_START,
+    };
+  }));
+}
+
+// Status 1 kelas pada 1 minggu tertentu: 'na' (belum waktunya / tidak ada jadwal minggu itu)
+// atau lengkap dgn totalSesi + uploadLengkap + rekapLengkap (dihitung dari SEMUA sesi yg
+// seharusnya kuliah minggu itu utk SEMUA mata kuliah kelas ybs, sampai batas hari ini).
+function computeWeekStatus(classData, weekNum){
+  const { matkul, scans, libur, semesterStart } = classData;
+  if(!semesterStart || !matkul.length) return { status:'na' };
+  const monday = weekMondayOf(weekNum, semesterStart);
+  const today = todayDateCap();
+  if(monday > today) return { status:'na' }; // minggu ini belum terjadi sama sekali
+  const saturday = addDaysDate(monday, 5);
+  const cap = saturday < today ? saturday : today;
+  let totalSesi = 0, uploaded = 0, direkap = 0;
+  matkul.forEach(mk=>{
+    const hariSet = hariArrayOf(mk);
+    if(!hariSet.length) return;
+    for(let d=new Date(monday); d<=cap; d=addDaysDate(d,1)){
+      const dn = dayNameOfDate(d);
+      if(!dn || !hariSet.includes(dn)) continue;
+      const tanggal = toISO(d);
+      if((libur||[]).some(l=>l.matkulId===mk.id && l.tanggal===tanggal)) continue; // Dosen Tidak Masuk -> tidak dihitung
+      totalSesi++;
+      const matches = scans.filter(s=>scanMatchesMatkul_(s, mk) && s.tanggal===tanggal);
+      if(matches.length) uploaded++;
+      if(matches.some(m=>m.direkap)) direkap++;
+    }
+  });
+  if(totalSesi===0) return { status:'na' }; // mis. UTS/UAS/jeda semester, tidak ada sesi terjadwal
+  return { status:'ok', totalSesi, uploadLengkap: uploaded===totalSesi, rekapLengkap: direkap===totalSesi };
+}
+
+function renderStatistikCell(st){
+  if(st.status==='na'){
+    return `<td class="statistik-cell"><span class="stat-chip stat-na" title="Belum ada sesi terjadwal / belum waktunya minggu ini">&mdash;</span></td>`;
+  }
+  const up = st.uploadLengkap
+    ? `<span class="stat-chip stat-ok" title="Upload lengkap: semua (${st.totalSesi}) sesi minggu ini sudah discan">U&#10003;</span>`
+    : `<span class="stat-chip stat-no" title="Upload BELUM lengkap (dari ${st.totalSesi} sesi minggu ini)">U&#10005;</span>`;
+  const rk = st.rekapLengkap
+    ? `<span class="stat-chip stat-ok" title="Rekap lengkap: semua sesi minggu ini sudah diisi rekap Admin">R&#10003;</span>`
+    : `<span class="stat-chip stat-no" title="Rekap BELUM lengkap / belum diisi Admin">R&#10005;</span>`;
+  return `<td class="statistik-cell"><div class="statistik-cell-inner">${up}${rk}</div></td>`;
+}
+
+function renderStatistik(){
+  const prodi = currentProdi();
+  if(!prodi) return `<div class="empty-state"><p>Pilih program studi dulu.</p></div>`;
+  const prodiKey = prodi.key;
+
+  // Ambil data dari server otomatis kalau belum pernah / prodi baru saja diganti -- TIDAK
+  // menunggu (async), supaya tab tetap langsung terbuka & menampilkan indikator memuat.
+  if(state.statistik.prodiKey !== prodiKey && !state.statistik.loading){
+    state.statistik.prodiKey = prodiKey;
+    state.statistik.loading = true;
+    state.statistik.error = null;
+    loadStatistikData(prodiKey).then(data=>{
+      if(state.statistik.prodiKey !== prodiKey) return; // sudah pindah prodi lain sebelum selesai
+      state.statistik.data = data;
+      state.statistik.loading = false;
+      render();
+    }).catch(e=>{
+      if(state.statistik.prodiKey !== prodiKey) return;
+      state.statistik.error = 'Gagal mengambil data dari server: ' + (e && e.message || e);
+      state.statistik.loading = false;
+      render();
+    });
+  }
+
+  const head = `
+    <div class="panel-head">
+      <div>
+        <h2>Statistik Upload &amp; Rekap &mdash; ${escapeHtml(prodi.nama)}</h2>
+        <p>Ceklis otomatis per kelas &amp; per minggu (Minggu 1&ndash;${STATISTIK_TOTAL_MINGGU}): <strong>U</strong> = scan absensi sudah lengkap diupload, <strong>R</strong> = sudah lengkap direkap Admin. Ganti tab program studi di atas utk melihat prodi lain.</p>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" id="statistikRefreshBtn" ${state.statistik.loading?'disabled':''}>${state.statistik.loading?'Memuat&hellip;':'\u21bb Muat Ulang'}</button>
+    </div>`;
+
+  if(state.statistik.loading && !state.statistik.data){
+    return `<div class="panel">${head}
+      <div class="empty-state"><div class="glyph">&#8987;</div><h3>Memuat data semua kelas&hellip;</h3>
+      <p>Mengambil data upload &amp; rekap utk ${prodi.kelas.length} kelas di ${escapeHtml(prodi.nama)}, mohon tunggu sebentar.</p></div>
+    </div>`;
+  }
+  if(state.statistik.error){
+    return `<div class="panel">${head}
+      <div class="empty-state"><div class="glyph">&#9888;</div><h3>Gagal memuat</h3><p>${escapeHtml(state.statistik.error)}</p></div>
+    </div>`;
+  }
+  if(!state.statistik.data || !state.statistik.data.length){
+    return `<div class="panel">${head}<div class="empty-state"><p>Belum ada kelas di program studi ini.</p></div></div>`;
+  }
+
+  const weekHeaders = Array.from({length:STATISTIK_TOTAL_MINGGU}, (_,i)=>`<th>Mgg ${i+1}</th>`).join('');
+  const rows = state.statistik.data.map(cd=>{
+    let cells = '';
+    for(let w=1; w<=STATISTIK_TOTAL_MINGGU; w++){
+      cells += renderStatistikCell(computeWeekStatus(cd, w));
+    }
+    return `<tr><td class="statistik-kelas-cell">${escapeHtml(cd.kelas)}</td>${cells}</tr>`;
+  }).join('');
+
+  return `
+  <div class="panel">
+    ${head}
+    <div class="note" style="margin-bottom:12px; display:flex; gap:18px; flex-wrap:wrap; align-items:center;">
+      <span><span class="stat-chip stat-ok">U&#10003; R&#10003;</span> lengkap semua</span>
+      <span><span class="stat-chip stat-no">U&#10005;</span> upload belum lengkap</span>
+      <span><span class="stat-chip stat-no">R&#10005;</span> rekap belum lengkap</span>
+      <span><span class="stat-chip stat-na">&mdash;</span> belum waktunya / tidak ada jadwal</span>
+    </div>
+    <div class="excel-table-scroll">
+      <table class="statistik-table">
+        <thead><tr><th>Kelas</th>${weekHeaders}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
 }
 
 /* ---- Rekap Kehadiran ---- */
@@ -4492,6 +4672,15 @@ function attachHandlers(){
   }));
   document.querySelectorAll('[data-kelas]').forEach(b=> b.addEventListener('click', ()=>{ state.kelas=b.dataset.kelas; loadClass(); }));
   document.querySelectorAll('[data-tab]').forEach(b=> b.addEventListener('click', ()=>{ state.tab=b.dataset.tab; render(); }));
+
+  const statistikRefreshBtn = document.getElementById('statistikRefreshBtn');
+  if(statistikRefreshBtn) statistikRefreshBtn.addEventListener('click', ()=>{
+    // Paksa ambil ulang dari server (bukan cuma pakai cache di state.statistik) --
+    // reset prodiKey supaya renderStatistik() menganggapnya "belum pernah diambil".
+    state.statistik.prodiKey = null;
+    state.statistik.data = null;
+    render();
+  });
 
   const addStudentForm = document.getElementById('addStudentForm');
   if(addStudentForm) addStudentForm.addEventListener('submit', async (e)=>{

@@ -2541,13 +2541,13 @@ const SEED_MATKUL = {
 // Untuk GANTI PIN: buka console browser (F12), jalankan:
 //   crypto.subtle.digest('SHA-256', new TextEncoder().encode('PIN_BARU_DISINI')).then(b=>console.log(Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('')))
 // lalu salin hasil hash yang muncul dan tempel menggantikan nilai di bawah ini.
-const ADMIN_PIN_HASH = '033581b0970477af916f08ad931c521b975b55f8368604ae58a537b387e792e1'; // hash dari '4512'
+const ADMIN_PIN_HASH = '033581b0970477af916f08ad931c521b975b55f8368604ae58a537b387e792e1';
 
 // PIN untuk menu "Upload Absensi" di sisi Ketua Kelas -- satu PIN sama dipakai untuk SEMUA
 // kelas (bukan beda-beda per kelas). PIN yang benar hanya berlaku untuk HARI itu saja: kalau
 // tanggal sudah berganti (mis. dibuka lagi besok), Ketua Kelas harus memasukkan PIN ulang.
 // Sama seperti ADMIN_PIN_HASH di atas, ini adalah hash SHA-256, bukan PIN asli.
-const KETUA_UPLOAD_PIN_HASH = '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4'; // hash dari '1234'
+const KETUA_UPLOAD_PIN_HASH = '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4';
 
 // Fungsi bantu: hitung hash SHA-256 dari sebuah teks (dipakai untuk mencocokkan PIN yang
 // diketik user dengan hash yang tersimpan di atas, tanpa pernah menyimpan PIN asli di kode).

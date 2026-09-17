@@ -3772,7 +3772,53 @@ function renderRekap(){
   return stat + listPanel + summaryPanel;
 }
 
-// Hitung rekap S/I/A dalam PERTEMUAN dan dalam JAM untuk satu mata kuliah tertentu
+// Nilai rekap per mahasiswa per sesi bisa berupa:
+//  - string kode lama: 'H'/'S'/'I'/'A' -> berlaku utk SELURUH jam pertemuan itu (format lama, tetap didukung)
+//  - object PARSIAL (manual jam): { type:'partial', hadir: <jam hadir>, sisa: 'A'|'S'|'I' }
+//    artinya mahasiswa itu hadir sejumlah <hadir> jam, sisanya (totalJam-hadir) dihitung
+//    sebagai status `sisa` (default 'A' / Alpa). Dipakai utk kasus mis. matkul 4 jam tapi
+//    mahasiswa cuma hadir 2 jam -> 2 jam sisanya otomatis Alpa tanpa perlu bikin sesi baru.
+// Fungsi ini SATU-SATUNYA tempat yang menerjemahkan nilai rekap (apapun bentuknya) jadi
+// jumlah jam H/S/I/A -- supaya semua penghitungan (rekap per matkul, rekap mingguan, rekap
+// total gabungan, export Excel) otomatis konsisten begitu format baru ini dipakai.
+function breakdownJamStatus(val, totalJam){
+  totalJam = totalJam || 0;
+  if(val && typeof val==='object' && val.type==='partial'){
+    const hadir = Math.max(0, Math.min(totalJam, Number(val.hadir)||0));
+    const sisaJam = totalJam - hadir;
+    const sisaKode = val.sisa || 'A';
+    const out = { H:hadir, S:0, I:0, A:0 };
+    if(sisaKode==='S') out.S = sisaJam;
+    else if(sisaKode==='I') out.I = sisaJam;
+    else out.A = sisaJam;
+    return out;
+  }
+  if(val==='S') return { H:0, S:totalJam, I:0, A:0 };
+  if(val==='I') return { H:0, S:0, I:totalJam, A:0 };
+  if(val==='H') return { H:totalJam, S:0, I:0, A:0 };
+  return { H:0, S:0, I:0, A:totalJam }; // 'A' atau belum ditandai admin -> Alpa
+}
+// Label singkat utk ditampilkan di ringkasan (mis. alert verifikasi simpan rekap)
+function labelForRekapValue(val, totalJam){
+  if(val && typeof val==='object' && val.type==='partial'){
+    const b = breakdownJamStatus(val, totalJam);
+    const sisaLabel = STATUS.find(s=>s.code===(val.sisa||'A'))?.label || 'Alpa';
+    return `Hadir ${b.H} jam, ${sisaLabel} ${totalJam-b.H} jam`;
+  }
+  return STATUS.find(s=>s.code===val)?.label || (val==null ? 'Hadir' : String(val));
+}
+// Bandingkan dua nilai rekap (string ATAU object parsial) apakah sama persis -- dipakai
+// utk verifikasi "apa yang disimpan == apa yang ada di server", karena object hasil
+// fetch JSON tidak bisa dibandingkan pakai === walau isinya identik.
+function rekapValuesEqual(a,b){
+  if(a===b) return true;
+  if(a && b && typeof a==='object' && typeof b==='object'){
+    return (a.type||'')===(b.type||'') && Number(a.hadir||0)===Number(b.hadir||0) && (a.sisa||'A')===(b.sisa||'A');
+  }
+  return false;
+}
+
+// Hitung rekap S/I/A dalam JAM untuk satu mata kuliah tertentu
 function hitungRekapMatkul(matkulId){
   const mk = state.matkul.find(m=>m.id===matkulId);
   const jamPerPertemuan = mk ? (mk.jam||1) : 1;
@@ -3783,27 +3829,24 @@ function hitungRekapMatkul(matkulId){
   const totalPertemuan = dates.length;
   const perStudent = {};
   state.students.forEach(st=>{
-    let S=0,I=0,A=0;
+    let Sjam=0, Ijam=0, Ajam=0;
     dates.forEach(tanggal=>{
       const sc = state.scans.find(s=>s.matkulId===matkulId && s.tanggal===tanggal);
       if(isLiburSesi(matkulId, tanggal) && !sc) return; // Dosen Tidak Masuk & belum ada scan pengganti -> tidak dihitung S/I/A sama sekali (tapi tetap masuk totalPertemuan)
       if(!sc || !sc.direkap){
         // Belum diupload sama sekali, ATAU sudah diupload tapi admin belum mengisi
-        // rekap utk sesi ini -> semua mahasiswa dianggap Alpa dulu.
-        A++;
+        // rekap utk sesi ini -> semua mahasiswa dianggap Alpa dulu (seluruh jam sesi).
+        Ajam += jamPerPertemuan;
         return;
       }
       const r = state.rekap[sc.id];
-      const status = r ? r[st.id] : null;
-      if(status==='S') S++;
-      else if(status==='I') I++;
-      else if(status==='H') { /* Hadir -> tidak dihitung S/I/A sama sekali */ }
-      else A++; // status 'A' atau belum ditandai admin -> Alpa
+      const val = r ? r[st.id] : null;
+      const b = breakdownJamStatus(val, jamPerPertemuan);
+      Sjam += b.S; Ijam += b.I; Ajam += b.A;
     });
     perStudent[st.id] = {
-      S, I, A, jumlahPertemuan: S+I+A,
-      Sjam: S*jamPerPertemuan, Ijam: I*jamPerPertemuan, Ajam: A*jamPerPertemuan,
-      jumlahJam: (S+I+A)*jamPerPertemuan,
+      Sjam, Ijam, Ajam,
+      jumlahJam: Sjam+Ijam+Ajam,
     };
   });
   return { jamPerPertemuan, totalPertemuan, totalJamMatkul: totalPertemuan*jamPerPertemuan, perStudent };
@@ -4235,7 +4278,24 @@ function renderModal(){
     const sc = state.scans.find(s=>s.id===state.modal.id);
     if(!sc){ state.modal=null; return; }
     const existingRekap = state.rekap[sc.id] || {};
-    const rows = state.students.map((st,i)=>`
+    // Jam per pertemuan utk mata kuliah sesi ini -- dipakai supaya kolom "Jam Manual"
+    // tahu batas maksimal jam yg bisa diisi (mis. 4 jam), dan sisanya otomatis Alpa.
+    const mkSesi = state.matkul.find(m=>m.id===sc.matkulId);
+    const jamSesi = mkSesi ? (mkSesi.jam||1) : 1;
+    const rows = state.students.map((st,i)=>{
+      const existingVal = existingRekap[st.id];
+      const isPartial = existingVal && typeof existingVal==='object' && existingVal.type==='partial';
+      const radioDefaultCode = isPartial ? null : (existingVal||'H');
+      const jamManualCol = jamSesi>1 ? `
+        <td>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <input type="number" class="jam-manual-input" data-student-jam="${st.id}" min="0" max="${jamSesi}" step="1"
+                   placeholder="&mdash;" value="${isPartial?existingVal.hadir:''}"
+                   style="width:52px; padding:4px 6px; font-size:12px; border:1px solid var(--line-strong); border-radius:6px;">
+            <span style="font-size:10.5px; color:var(--ink-soft); white-space:nowrap;">/ ${jamSesi} jam hadir</span>
+          </div>
+        </td>` : '';
+      return `
       <tr>
         <td class="mono">${i+1}</td>
         <td>${escapeHtml(st.nama)}</td>
@@ -4244,12 +4304,14 @@ function renderModal(){
           <div class="status-group">
             ${STATUS.map(op=>`
               <label class="status-opt">
-                <input type="radio" name="st_${st.id}" value="${op.code}" ${(existingRekap[st.id]||'H')===op.code?'checked':''}>
+                <input type="radio" name="st_${st.id}" value="${op.code}" ${radioDefaultCode===op.code?'checked':''}>
                 <span class="${op.code}">${op.code}</span>
               </label>`).join('')}
           </div>
         </td>
-      </tr>`).join('');
+        ${jamManualCol}
+      </tr>`;
+    }).join('');
 
     root.innerHTML = `
       <div class="modal-overlay" data-close-modal="1">
@@ -4261,7 +4323,7 @@ function renderModal(){
           <div class="modal-body">
             <div id="imgZoomWrap_rekap_${sc.id}">${renderZoomableImage(sc.dataUrl, 'Scan absensi', 'rekap_'+sc.id)}</div>
             ${state.students.length ? `
-            <form id="rekapForm">
+            <form id="rekapForm" data-jam-sesi="${jamSesi}">
               <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; padding:10px 12px; background:var(--paper); border:1px solid var(--line); border-radius:8px;">
                 <span style="font-size:12px; font-weight:700; color:var(--ink-soft);">Tandai semua:</span>
                 <button type="button" class="btn btn-ghost btn-sm" data-mark-all="H">Hadir Semua</button>
@@ -4270,9 +4332,10 @@ function renderModal(){
                 <button type="button" class="btn btn-ghost btn-sm" data-mark-all="A">Alpa Semua</button>
                 <span class="note" style="margin-left:auto;">Klik dulu salah satu di atas, lalu ubah manual baris yang berbeda.</span>
               </div>
+              ${jamSesi>1 ? `<div class="note" style="margin-bottom:10px;">Mata kuliah ini <strong>${jamSesi} jam</strong> per pertemuan. Kalau mahasiswa cuma hadir SEBAGIAN jam (mis. hadir 2 dari ${jamSesi} jam), isi kolom <strong>Jam Manual</strong> dengan jumlah jam dia hadir &mdash; sisa jamnya otomatis dihitung <strong>Alpa</strong>. Kolom Jam Manual ini mengalahkan pilihan H/I/S/A di baris yang sama.</div>` : ''}
               <div class="excel-table-scroll">
                 <table>
-                  <thead><tr><th style="width:34px;">No</th><th>Nama</th><th>NIM</th><th style="width:190px;">Status</th></tr></thead>
+                  <thead><tr><th style="width:34px;">No</th><th>Nama</th><th>NIM</th><th style="width:190px;">Status</th>${jamSesi>1?'<th style="width:150px;">Jam Manual (opsional)</th>':''}</tr></thead>
                   <tbody>${rows}</tbody>
                 </table>
               </div>
@@ -4305,14 +4368,33 @@ function renderModal(){
         state.students.forEach(st=>{
           const radio = rekapForm.querySelector(`input[name="st_${st.id}"][value="${val}"]`);
           if(radio) radio.checked = true;
+          // "Tandai semua" berarti status utuh utk SELURUH jam sesi -- kosongkan Jam Manual
+          // supaya tidak nyangkut nilai parsial lama dari baris ini.
+          const jamInput = rekapForm.querySelector(`[data-student-jam="${st.id}"]`);
+          if(jamInput) jamInput.value = '';
         });
       });
     });
     rekapForm.addEventListener('submit', async (e)=>{
       e.preventDefault();
       const scanId = state.modal.id;
+      const jamSesi = Number(rekapForm.dataset.jamSesi)||1;
       const result = {};
       state.students.forEach(st=>{
+        // Kolom "Jam Manual" (kalau diisi) MENGALAHKAN pilihan radio H/I/S/A -- dipakai
+        // utk kasus hadir SEBAGIAN jam (mis. hadir 2 dari 4 jam), sisanya otomatis Alpa.
+        const jamInput = rekapForm.querySelector(`[data-student-jam="${st.id}"]`);
+        const jamRaw = jamInput ? jamInput.value.trim() : '';
+        if(jamRaw !== '' && !isNaN(Number(jamRaw))){
+          const hadir = Math.max(0, Math.min(jamSesi, Number(jamRaw)));
+          if(hadir < jamSesi){
+            result[st.id] = { type:'partial', hadir, sisa:'A' };
+            return;
+          }
+          // Jam manual diisi PENUH (sama dgn jam sesi) -> sama saja Hadir biasa.
+          result[st.id] = 'H';
+          return;
+        }
         const checked = rekapForm.querySelector(`input[name="st_${st.id}"]:checked`);
         result[st.id] = checked ? checked.value : 'H';
       });
@@ -4347,16 +4429,16 @@ function renderModal(){
       }
       try{
         const cek = await safeGetRaw('rekap:'+keyBase());
-        const cocok = cek.found && cek.value && cek.value[scanId] && Object.keys(result).every(sid=> cek.value[scanId][sid]===result[sid]);
+        const cocok = cek.found && cek.value && cek.value[scanId] && Object.keys(result).every(sid=> rekapValuesEqual(cek.value[scanId][sid], result[sid]));
         // Ringkasan mahasiswa yang statusnya BUKAN Hadir (biasanya cuma sedikit), supaya bisa
         // langsung dicek dengan mata apakah yang tersimpan di SERVER (bukan cuma di layar) itu
         // benar sesuai yang barusan diedit -- ini untuk memastikan tanpa harus buka Google Sheets.
         const nonHadir = state.students
           .filter(st=> result[st.id] !== 'H')
-          .map(st=> `${st.nama}: ${STATUS.find(s=>s.code===result[st.id])?.label || result[st.id]}`);
+          .map(st=> `${st.nama}: ${labelForRekapValue(result[st.id], jamSesi)}`);
         const ringkasanDiminta = nonHadir.length ? nonHadir.join('\n') : '(semua mahasiswa Hadir)';
         const statusServer = cek.found && cek.value && cek.value[scanId]
-          ? state.students.filter(st=> cek.value[scanId][st.id] !== 'H').map(st=> `${st.nama}: ${STATUS.find(s=>s.code===cek.value[scanId][st.id])?.label || cek.value[scanId][st.id]}`)
+          ? state.students.filter(st=> cek.value[scanId][st.id] !== 'H').map(st=> `${st.nama}: ${labelForRekapValue(cek.value[scanId][st.id], jamSesi)}`)
           : null;
         const ringkasanServer = statusServer ? (statusServer.length ? statusServer.join('\n') : '(semua mahasiswa Hadir)') : '(gagal membaca ulang dari server)';
         if(!cocok){
@@ -5008,11 +5090,9 @@ function sessionStatusForDate(mk, dateStr, studentId){
     return sudahLewat ? {S:0,I:0,A:jam} : {S:0,I:0,A:0};
   }
   const r = state.rekap[sc.id];
-  const status = r ? r[studentId] : null;
-  if(status==='S') return {S:jam,I:0,A:0};
-  if(status==='I') return {S:0,I:jam,A:0};
-  if(status==='H') return {S:0,I:0,A:0}; // Hadir -> tidak dihitung S/I/A sama sekali
-  return {S:0,I:0,A:jam}; // status 'A' atau belum ditandai admin -> Alpa
+  const val = r ? r[studentId] : null;
+  const b = breakdownJamStatus(val, jam);
+  return {S:b.S, I:b.I, A:b.A};
 }
 function cumulativeSIA(uptoDate, matkulId, studentId){
   let S=0,I=0,A=0;
@@ -5029,11 +5109,9 @@ function cumulativeSIA(uptoDate, matkulId, studentId){
       return;
     }
     const r = state.rekap[sc.id];
-    const status = r ? r[studentId] : null;
-    if(status==='S') S+=jam;
-    else if(status==='I') I+=jam;
-    else if(status==='H') { /* Hadir -> tidak dihitung S/I/A sama sekali */ }
-    else A+=jam; // status 'A' atau belum ditandai -> Alpa
+    const val = r ? r[studentId] : null;
+    const b = breakdownJamStatus(val, jam);
+    S+=b.S; I+=b.I; A+=b.A;
   });
   return {S,I,A};
 }

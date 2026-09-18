@@ -2649,6 +2649,9 @@ let state = {
     // { prodiKey: prodi yg terakhir diambil datanya, loading, data: [{kelas,matkul,scans,rekap,
     // libur,semesterStart}, ...] per kelas di prodi itu, error }. Diambil ulang otomatis kalau
     // admin/ketua pindah tab program studi (lihat renderStatistik).
+  rekapSP: { prodiKey:null, loading:false, data:null, error:null, week:null }, // cache tab Rekap SP --
+    // sama strukturnya dengan "statistik" di atas (per kelas: kelas,students,matkul,scans,rekap,
+    // libur,semesterStart), ditambah "week" = minggu yang sedang dipilih di dropdown tab ini.
 };
 
 function currentProdi(){ return PRODI.find(p=>p.key===state.prodi); }
@@ -3373,9 +3376,12 @@ function renderTabnav(){
     {id:'upload', label:'Upload Absensi'},
     {id:'rekap', label:'Rekap Kehadiran'},
     {id:'statistik', label:'Statistik'},
+    {id:'rekapsp', label:'Rekap SP'}, // khusus Admin -- lihat filter tabs Ketua Kelas di bawah
   ];
   // Ketua kelas hanya boleh mengunggah scan absensi dan melihat rekapan/statistik --
-  // tidak boleh mengubah data mahasiswa maupun mata kuliah (itu wewenang Admin).
+  // tidak boleh mengubah data mahasiswa maupun mata kuliah (itu wewenang Admin), dan tidak
+  // boleh melihat "Rekap SP" (itu juga khusus Admin, dipakai untuk urusan konsultasi/pemanggilan
+  // orang tua mahasiswa, bukan konsumsi Ketua Kelas).
   const tabs = state.role==='ketua' ? allTabs.filter(t=>t.id==='upload'||t.id==='rekap'||t.id==='statistik') : allTabs;
   return `<div class="tabnav">
     ${tabs.map(t=>`<button class="${state.tab===t.id?'active':''}" data-tab="${t.id}">${t.label}</button>`).join('')}
@@ -3385,7 +3391,7 @@ function renderTabnav(){
 function renderTabContent(){
   // Proteksi tambahan: kalau Ketua Kelas nyasar ke tab mahasiswa/matkul (mis. lewat state lama),
   // paksa balik ke tab upload -- bukan cuma disembunyikan tombolnya di navigasi.
-  if(state.role==='ketua' && (state.tab==='mahasiswa' || state.tab==='matkul')){
+  if(state.role==='ketua' && (state.tab==='mahasiswa' || state.tab==='matkul' || state.tab==='rekapsp')){
     state.tab = 'upload';
   }
   if(state.tab==='mahasiswa') return renderMahasiswa();
@@ -3400,6 +3406,7 @@ function renderTabContent(){
   }
   if(state.tab==='rekap') return renderRekap();
   if(state.tab==='statistik') return renderStatistik();
+  if(state.tab==='rekapsp') return renderRekapSP();
   return '';
 }
 
@@ -3870,6 +3877,195 @@ function renderStatistik(){
         <tbody>${rows}</tbody>
       </table>
     </div>
+  </div>`;
+}
+
+/* ---- Rekap SP (khusus Admin) ----
+   Menghitung, per kelas dalam 1 prodi, berapa mahasiswa yang BARU PERTAMA KALI menembus
+   ambang batas SP1/SP2/SP3 (jam Alpa kumulatif) pada satu minggu tertentu. Begitu seorang
+   mahasiswa sudah "tercatat" dapat SP1 di minggu ke-X, dia TIDAK dihitung lagi di minggu-
+   minggu berikutnya untuk SP1 -- namanya baru muncul lagi kalau nanti menembus ambang SP2
+   (di minggu manapun itu terjadi), lalu SP3, dst. Dipakai untuk urusan konsultasi/pemanggilan
+   orang tua sesuai aturan jurusan (lihat spKeterangan()). */
+
+// Ambil data (mahasiswa, matkul, scans, rekap, libur, semesterStart) utk SEMUA kelas dalam
+// 1 prodi sekaligus -- sama seperti loadStatistikData(), tapi ikut menyertakan roster
+// mahasiswa (yang di loadStatistikData sengaja dibuang) karena "Rekap SP" perlu tahu nama
+// & id tiap mahasiswa per kelas untuk dihitung jam Alpa kumulatifnya masing-masing.
+async function loadRekapSPData(prodiKey){
+  const prodi = PRODI.find(p=>p.key===prodiKey);
+  if(!prodi) return [];
+  return Promise.all(prodi.kelas.map(async kelas=>{
+    const base = prodiKey+':'+kelas;
+    const [rosterRes, matkulRes, scansRes, rekapRes, semStartRes, liburRes] = await batchGetClassData_(base);
+    let matkul = matkulRes.value;
+    if(!matkul){
+      // Kelas ini belum pernah dibuka sama sekali -- pakai bawaan SEED_MATKUL, sama seperti loadClass().
+      matkul = SEED_MATKUL[base] ? SEED_MATKUL[base].map(m=>({ id:uid(), nama:m.nama, jam:m.jam, hari: m.hari?[m.hari]:[] })) : [];
+    }
+    matkul.forEach(m=>{ m.hari = hariArrayOf(m); });
+    let students = rosterRes.value;
+    if(!students){
+      students = SEED_STUDENTS[base] ? SEED_STUDENTS[base].map(s=>({id:uid(), nama:s.nama, nim:s.nim})) : [];
+    }
+    students = [...students].sort((a,b)=> String(a.nim).localeCompare(String(b.nim), undefined, {numeric:true}));
+    return {
+      kelas,
+      students,
+      matkul,
+      scans: scansRes.value || [],
+      rekap: rekapRes.value || {},
+      libur: liburRes.value || [],
+      semesterStart: semStartRes.value || DEFAULT_SEMESTER_START,
+    };
+  }));
+}
+
+// Ambang jam Alpa kumulatif untuk tiap kategori SP -- PERSIS sama dengan angka yang dipakai
+// di spKeterangan(), supaya kategori yang muncul di "Rekap SP" selalu konsisten dengan
+// keterangan yang tampil di tabel "Rekap Absensi per Minggu".
+const SP_THRESHOLDS = [
+  { key:'sp1', label:'SP1', min:15 },
+  { key:'sp2', label:'SP2', min:30 },
+  { key:'sp3', label:'SP3', min:45 },
+];
+
+// Untuk 1 kelas (classData dari loadRekapSPData), cari MINGGU PERTAMA tiap mahasiswa
+// menembus ambang SP1/SP2/SP3 (dihitung dari jam Alpa kumulatif per akhir minggu/Sabtu,
+// pakai cumulativeAJam_g -- versi generik cumulativeSIA yang tidak bergantung ke state
+// global, supaya bisa dipakai untuk kelas mana pun, bukan cuma kelas yang aktif di layar).
+// Return: { studentId: { sp1: minggu|null, sp2: minggu|null, sp3: minggu|null } }
+function computeSPFirstWeeks(classData){
+  const result = {};
+  classData.students.forEach(st=>{ result[st.id] = { sp1:null, sp2:null, sp3:null }; });
+  if(!classData.semesterStart || !classData.matkul.length || !classData.students.length) return result;
+  const today = todayDateCap();
+  for(let w=1; w<=STATISTIK_TOTAL_MINGGU; w++){
+    const monday = weekMondayOf(w, classData.semesterStart);
+    if(monday > today) break; // minggu ini (dan seterusnya) belum terjadi -- berhenti di sini
+    const saturday = addDaysDate(monday, 5);
+    classData.students.forEach(st=>{
+      const totalA = cumulativeAJam_g(saturday, classData, st.id);
+      SP_THRESHOLDS.forEach(t=>{
+        if(result[st.id][t.key]==null && totalA >= t.min) result[st.id][t.key] = w;
+      });
+    });
+  }
+  return result;
+}
+
+function renderRekapSP(){
+  const prodi = currentProdi();
+  if(!prodi) return `<div class="empty-state"><p>Pilih program studi dulu.</p></div>`;
+  const prodiKey = prodi.key;
+
+  // Ambil data dari server otomatis kalau belum pernah / prodi baru saja diganti -- sama
+  // seperti pola di renderStatistik().
+  if(state.rekapSP.prodiKey !== prodiKey && !state.rekapSP.loading){
+    state.rekapSP.prodiKey = prodiKey;
+    state.rekapSP.loading = true;
+    state.rekapSP.error = null;
+    loadRekapSPData(prodiKey).then(data=>{
+      if(state.rekapSP.prodiKey !== prodiKey) return;
+      state.rekapSP.data = data;
+      state.rekapSP.loading = false;
+      render();
+    }).catch(e=>{
+      if(state.rekapSP.prodiKey !== prodiKey) return;
+      state.rekapSP.error = 'Gagal mengambil data dari server: ' + (e && e.message || e);
+      state.rekapSP.loading = false;
+      render();
+    });
+  }
+
+  const head = `
+    <div class="panel-head">
+      <div>
+        <h2>Rekap SP &mdash; ${escapeHtml(prodi.nama)}</h2>
+        <p>Jumlah mahasiswa per kelas yang <strong>baru pertama kali</strong> menembus ambang SP1/SP2/SP3 (jam Alpa kumulatif sejak awal semester) pada minggu terpilih. Mahasiswa yang sudah pernah tercatat di satu kategori SP tidak dihitung ulang di minggu-minggu berikutnya untuk kategori yang sama -- namanya baru muncul lagi kalau kelak naik ke kategori SP berikutnya. Ganti tab program studi di atas utk melihat prodi lain.</p>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" id="rekapSPRefreshBtn" ${state.rekapSP.loading?'disabled':''}>${state.rekapSP.loading?'Memuat&hellip;':'\u21bb Muat Ulang'}</button>
+    </div>`;
+
+  if(state.rekapSP.loading && !state.rekapSP.data){
+    return `<div class="panel">${head}
+      <div class="empty-state"><div class="glyph">&#8987;</div><h3>Memuat data semua kelas&hellip;</h3>
+      <p>Mengambil data mahasiswa &amp; kehadiran utk ${prodi.kelas.length} kelas di ${escapeHtml(prodi.nama)}, mohon tunggu sebentar.</p></div>
+    </div>`;
+  }
+  if(state.rekapSP.error){
+    return `<div class="panel">${head}
+      <div class="empty-state"><div class="glyph">&#9888;</div><h3>Gagal memuat</h3><p>${escapeHtml(state.rekapSP.error)}</p></div>
+    </div>`;
+  }
+  if(!state.rekapSP.data || !state.rekapSP.data.length){
+    return `<div class="panel">${head}<div class="empty-state"><p>Belum ada kelas di program studi ini.</p></div></div>`;
+  }
+
+  // Default minggu terpilih = minggu berjalan sekarang, sama seperti panel "Rekap Absensi per Minggu".
+  if(!state.rekapSP.week || state.rekapSP.week<1 || state.rekapSP.week>STATISTIK_TOTAL_MINGGU){
+    const curWeek = weekIndexForDate(todayStr(), state.semesterStart || DEFAULT_SEMESTER_START) || 1;
+    state.rekapSP.week = Math.min(Math.max(curWeek,1), STATISTIK_TOTAL_MINGGU);
+  }
+  const week = state.rekapSP.week;
+
+  const perClass = state.rekapSP.data.map(cd=>{
+    const firstWeeks = computeSPFirstWeeks(cd);
+    const names = { sp1:[], sp2:[], sp3:[] };
+    cd.students.forEach(st=>{
+      const fw = firstWeeks[st.id];
+      SP_THRESHOLDS.forEach(t=>{ if(fw[t.key]===week) names[t.key].push(st.nama); });
+    });
+    return { kelas: cd.kelas, names };
+  });
+
+  const weekOptions = Array.from({length:STATISTIK_TOTAL_MINGGU}, (_,i)=>i+1).map(w=>{
+    const mon = weekMondayOf(w, state.semesterStart || DEFAULT_SEMESTER_START);
+    const sat = addDaysDate(mon,5);
+    return `<option value="${w}" ${w===week?'selected':''}>Minggu ${w} (${fmtDDMMYYYY(mon)} &ndash; ${fmtDDMMYYYY(sat)})</option>`;
+  }).join('');
+
+  const totalSP = { sp1:0, sp2:0, sp3:0 };
+  const rows = perClass.map(pc=>{
+    SP_THRESHOLDS.forEach(t=>{ totalSP[t.key] += pc.names[t.key].length; });
+    const cell = (key)=>{
+      const n = pc.names[key].length;
+      if(!n) return `<td class="mono" style="text-align:center; color:var(--ink-soft);">0</td>`;
+      return `<td class="mono" style="text-align:center; font-weight:700;" title="${escapeHtml(pc.names[key].join(', '))}">${n}</td>`;
+    };
+    return `<tr><td class="statistik-kelas-cell">${escapeHtml(pc.kelas)}</td>${cell('sp1')}${cell('sp2')}${cell('sp3')}</tr>`;
+  }).join('');
+
+  const detailBlocks = perClass.filter(pc=> pc.names.sp1.length||pc.names.sp2.length||pc.names.sp3.length).map(pc=>{
+    const lines = SP_THRESHOLDS.filter(t=>pc.names[t.key].length).map(t=>
+      `<div style="margin-top:4px;"><strong>${t.label}:</strong> ${escapeHtml(pc.names[t.key].join(', '))}</div>`
+    ).join('');
+    return `<div style="margin-bottom:10px;"><strong>Kelas ${escapeHtml(pc.kelas)}</strong>${lines}</div>`;
+  }).join('');
+
+  return `
+  <div class="panel">
+    ${head}
+    <div class="selector-group" style="max-width:360px; margin-bottom:16px;">
+      <span class="selector-label">Minggu</span>
+      <select id="rekapSPWeekSelect">${weekOptions}</select>
+    </div>
+    <div class="excel-table-scroll">
+      <table class="statistik-table">
+        <thead><tr><th>Kelas</th><th>SP1</th><th>SP2</th><th>SP3</th></tr></thead>
+        <tbody>${rows}
+          <tr style="font-weight:700; background:var(--paper);">
+            <td class="statistik-kelas-cell">TOTAL</td>
+            <td class="mono" style="text-align:center;">${totalSP.sp1}</td>
+            <td class="mono" style="text-align:center;">${totalSP.sp2}</td>
+            <td class="mono" style="text-align:center;">${totalSP.sp3}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    ${detailBlocks
+      ? `<div class="note" style="margin-top:14px;"><strong>Detail nama &mdash; Minggu ${week}:</strong>${detailBlocks}</div>`
+      : `<div class="note" style="margin-top:14px;">Tidak ada mahasiswa yang baru menembus SP1/SP2/SP3 di minggu ${week} pada ${escapeHtml(prodi.nama)}.</div>`}
   </div>`;
 }
 
@@ -4697,6 +4893,19 @@ function attachHandlers(){
     render();
   });
 
+  const rekapSPRefreshBtn = document.getElementById('rekapSPRefreshBtn');
+  if(rekapSPRefreshBtn) rekapSPRefreshBtn.addEventListener('click', ()=>{
+    // Sama seperti statistikRefreshBtn -- paksa ambil ulang dari server.
+    state.rekapSP.prodiKey = null;
+    state.rekapSP.data = null;
+    render();
+  });
+  const rekapSPWeekSelect = document.getElementById('rekapSPWeekSelect');
+  if(rekapSPWeekSelect) rekapSPWeekSelect.addEventListener('change', ()=>{
+    state.rekapSP.week = parseInt(rekapSPWeekSelect.value, 10);
+    render();
+  });
+
   const addStudentForm = document.getElementById('addStudentForm');
   if(addStudentForm) addStudentForm.addEventListener('submit', async (e)=>{
     e.preventDefault();
@@ -5318,6 +5527,63 @@ function cumulativeSIA(uptoDate, matkulId, studentId){
     S+=b.S; I+=b.I; A+=b.A;
   });
   return {S,I,A};
+}
+
+// ---- Versi GENERIK dari expectedSessionDatesForMatkul/allSessionDatesForMatkul/isLiburSesi/
+// findScanForSession_ di atas, yang TIDAK bergantung ke `state` global -- menerima semua data
+// (matkul, scans, libur, semesterStart) lewat parameter. Dipakai KHUSUS oleh tab "Rekap SP"
+// (lihat computeSPFirstWeeks) supaya bisa menghitung jam Alpa kumulatif utk kelas MANA PUN
+// (bukan cuma kelas yang sedang aktif/dibuka di layar admin sekarang).
+function expectedSessionDatesForMatkul_g(mk, uptoDate, semesterStart){
+  if(!semesterStart) return [];
+  const hariSet = hariArrayOf(mk);
+  if(!hariSet.length) return [];
+  const start = getMondayOf(parseISODate(semesterStart));
+  const cap = uptoDate < todayDateCap() ? uptoDate : todayDateCap();
+  const dates = [];
+  for(let d=new Date(start); d<=cap; d=addDaysDate(d,1)){
+    const dn = dayNameOfDate(d);
+    if(dn && hariSet.includes(dn)) dates.push(toISO(d));
+  }
+  return dates;
+}
+function allSessionDatesForMatkul_g(mk, uptoDate, semesterStart, scans){
+  const set = new Set(expectedSessionDatesForMatkul_g(mk, uptoDate, semesterStart));
+  (scans||[]).forEach(sc=>{
+    if(sc.matkulId===mk.id && parseISODate(sc.tanggal) <= uptoDate) set.add(sc.tanggal);
+  });
+  return Array.from(set).sort();
+}
+function isLiburSesi_g(libur, matkulId, tanggal){
+  return (libur||[]).some(l=>l.matkulId===matkulId && l.tanggal===tanggal);
+}
+function findScanForSession_g(scans, mk, dateStr){
+  const matches = (scans||[]).filter(s=>scanMatchesMatkul_(s, mk) && s.tanggal===dateStr);
+  if(matches.length<=1) return matches[0];
+  const sorted = [...matches].sort((a,b)=>{
+    if(!!b.direkap !== !!a.direkap) return (b.direkap?1:0) - (a.direkap?1:0);
+    return new Date(b.uploadedAt||0) - new Date(a.uploadedAt||0);
+  });
+  return sorted[0];
+}
+// Total jam Alpa (A) kumulatif SEMUA mata kuliah untuk 1 mahasiswa di 1 kelas (classData),
+// sampai uptoDate -- versi generik dari cumulativeSIA yang hanya mengembalikan total A
+// (karena kategori SP hanya bergantung ke jam Alpa, lihat spKeterangan()).
+function cumulativeAJam_g(uptoDate, classData, studentId){
+  let A = 0;
+  classData.matkul.forEach(mk=>{
+    const jam = mk.jam||1;
+    allSessionDatesForMatkul_g(mk, uptoDate, classData.semesterStart, classData.scans).forEach(tanggal=>{
+      const sc = findScanForSession_g(classData.scans, mk, tanggal);
+      if(isLiburSesi_g(classData.libur, mk.id, tanggal) && !sc) return;
+      if(!sc || !sc.direkap){ A += jam; return; }
+      const r = classData.rekap[sc.id];
+      const val = r ? r[studentId] : null;
+      const b = breakdownJamStatus(val, jam);
+      A += b.A;
+    });
+  });
+  return A;
 }
 
 // Tandai HADIR untuk SEMUA mahasiswa, di SEMUA sesi (scan) pada minggu terpilih, dalam satu

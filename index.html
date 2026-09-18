@@ -3982,7 +3982,7 @@ function renderRekapSP(){
     <div class="panel-head">
       <div>
         <h2>Rekap SP &mdash; ${escapeHtml(prodi.nama)}</h2>
-        <p>Jumlah mahasiswa per kelas yang <strong>baru pertama kali</strong> menembus ambang SP1/SP2/SP3 (jam Alpa kumulatif sejak awal semester) pada minggu terpilih. Mahasiswa yang sudah pernah tercatat di satu kategori SP tidak dihitung ulang di minggu-minggu berikutnya untuk kategori yang sama -- namanya baru muncul lagi kalau kelak naik ke kategori SP berikutnya. Ganti tab program studi di atas utk melihat prodi lain.</p>
+        <p>Jumlah mahasiswa per kelas yang <strong>baru pertama kali</strong> menembus ambang SP1/SP2/SP3 (jam Alpa kumulatif sejak awal semester) pada minggu itu. Mahasiswa yang sudah pernah tercatat di satu kategori SP tidak dihitung ulang di minggu-minggu berikutnya untuk kategori yang sama -- namanya baru muncul lagi kalau kelak naik ke kategori SP berikutnya. Ganti tab program studi di atas utk melihat prodi lain.</p>
       </div>
       <button type="button" class="btn btn-ghost btn-sm" id="rekapSPRefreshBtn" ${state.rekapSP.loading?'disabled':''}>${state.rekapSP.loading?'Memuat&hellip;':'\u21bb Muat Ulang'}</button>
     </div>`;
@@ -4002,76 +4002,68 @@ function renderRekapSP(){
     return `<div class="panel">${head}<div class="empty-state"><p>Belum ada kelas di program studi ini.</p></div></div>`;
   }
 
-  // Sebelumnya panel ini menampilkan HANYA 1 minggu (dipilih lewat dropdown). Sekarang
-  // semua minggu yang sudah terjadi (minggu 1 s.d. minggu berjalan) ditampilkan sekaligus,
-  // masing-masing sebagai blok tabel sendiri, supaya tidak perlu gonta-ganti dropdown utk
-  // menyisir minggu mana yang ada SP baru.
+  // Satu tabel matriks: baris = kelas, kolom = Minggu 1..minggu berjalan, tiap minggu
+  // punya 3 sub-kolom SP1/SP2/SP3 (persis format Excel yang diminta), supaya semua minggu
+  // kelihatan sekaligus tanpa perlu scroll blok terpisah atau ganti dropdown.
   const curWeek = Math.min(Math.max(weekIndexForDate(todayStr(), state.semesterStart || DEFAULT_SEMESTER_START) || 1, 1), STATISTIK_TOTAL_MINGGU);
+  const weeks = Array.from({length:curWeek}, (_,i)=>i+1);
 
-  // Hitung firstWeeks sekali per kelas (dipakai ulang utk semua minggu).
-  const firstWeeksByClass = state.rekapSP.data.map(cd=> ({ kelas: cd.kelas, firstWeeks: computeSPFirstWeeks(cd), students: cd.students }));
-
-  const weekBlocks = Array.from({length:curWeek}, (_,i)=>i+1).map(week=>{
-    const perClass = firstWeeksByClass.map(cd=>{
-      const names = { sp1:[], sp2:[], sp3:[] };
-      cd.students.forEach(st=>{
-        const fw = cd.firstWeeks[st.id];
-        SP_THRESHOLDS.forEach(t=>{ if(fw[t.key]===week) names[t.key].push(st.nama); });
+  // Hitung firstWeeks sekali per kelas, lalu susun jadi { kelas: { week: {sp1:[nama..], sp2:[...], sp3:[...]} } }
+  const perClassPerWeek = state.rekapSP.data.map(cd=>{
+    const firstWeeks = computeSPFirstWeeks(cd);
+    const byWeek = {};
+    weeks.forEach(w=>{ byWeek[w] = { sp1:[], sp2:[], sp3:[] }; });
+    cd.students.forEach(st=>{
+      const fw = firstWeeks[st.id];
+      SP_THRESHOLDS.forEach(t=>{
+        const w = fw[t.key];
+        if(w!=null && byWeek[w]) byWeek[w][t.key].push(st.nama);
       });
-      return { kelas: cd.kelas, names };
     });
+    return { kelas: cd.kelas, byWeek };
+  });
 
-    const totalSP = { sp1:0, sp2:0, sp3:0 };
-    const rows = perClass.map(pc=>{
-      SP_THRESHOLDS.forEach(t=>{ totalSP[t.key] += pc.names[t.key].length; });
-      const cell = (key)=>{
-        const n = pc.names[key].length;
-        if(!n) return `<td class="mono" style="text-align:center; color:var(--ink-soft);">0</td>`;
-        return `<td class="mono" style="text-align:center; font-weight:700;" title="${escapeHtml(pc.names[key].join(', '))}">${n}</td>`;
-      };
-      return `<tr><td class="statistik-kelas-cell">${escapeHtml(pc.kelas)}</td>${cell('sp1')}${cell('sp2')}${cell('sp3')}</tr>`;
+  const weekHeaderCells = weeks.map(w=>`<th colspan="3">Minggu ${w}</th>`).join('');
+  const spHeaderCells = weeks.map(()=> SP_THRESHOLDS.map(t=>`<th>${t.label}</th>`).join('')).join('');
+
+  const totalPerWeek = {};
+  weeks.forEach(w=>{ totalPerWeek[w] = { sp1:0, sp2:0, sp3:0 }; });
+
+  const rows = perClassPerWeek.map(pc=>{
+    const cells = weeks.map(w=>{
+      const wk = pc.byWeek[w];
+      return SP_THRESHOLDS.map(t=>{
+        const n = wk[t.key].length;
+        totalPerWeek[w][t.key] += n;
+        if(!n) return `<td class="mono" style="text-align:center; color:var(--ink-soft);">&nbsp;</td>`;
+        return `<td class="mono" style="text-align:center; font-weight:700;" title="${escapeHtml(wk[t.key].join(', '))}">${n}</td>`;
+      }).join('');
     }).join('');
-
-    const detailBlocks = perClass.filter(pc=> pc.names.sp1.length||pc.names.sp2.length||pc.names.sp3.length).map(pc=>{
-      const lines = SP_THRESHOLDS.filter(t=>pc.names[t.key].length).map(t=>
-        `<div style="margin-top:4px;"><strong>${t.label}:</strong> ${escapeHtml(pc.names[t.key].join(', '))}</div>`
-      ).join('');
-      return `<div style="margin-bottom:10px;"><strong>Kelas ${escapeHtml(pc.kelas)}</strong>${lines}</div>`;
-    }).join('');
-
-    const adaSP = totalSP.sp1||totalSP.sp2||totalSP.sp3;
-    const mon = weekMondayOf(week, state.semesterStart || DEFAULT_SEMESTER_START);
-    const sat = addDaysDate(mon,5);
-
-    return `
-    <div class="panel" style="margin-top:14px;">
-      <div class="panel-head">
-        <div><h3 style="margin:0;">Minggu ${week} <span style="font-weight:400; color:var(--ink-soft);">(${fmtDDMMYYYY(mon)} &ndash; ${fmtDDMMYYYY(sat)})</span></h3></div>
-      </div>
-      <div class="excel-table-scroll">
-        <table class="statistik-table">
-          <thead><tr><th>Kelas</th><th>SP1</th><th>SP2</th><th>SP3</th></tr></thead>
-          <tbody>${rows}
-            <tr style="font-weight:700; background:var(--paper);">
-              <td class="statistik-kelas-cell">TOTAL</td>
-              <td class="mono" style="text-align:center;">${totalSP.sp1}</td>
-              <td class="mono" style="text-align:center;">${totalSP.sp2}</td>
-              <td class="mono" style="text-align:center;">${totalSP.sp3}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      ${adaSP
-        ? `<div class="note" style="margin-top:14px;"><strong>Detail nama:</strong>${detailBlocks}</div>`
-        : `<div class="note" style="margin-top:14px;">Tidak ada mahasiswa yang baru menembus SP1/SP2/SP3 di minggu ${week} pada ${escapeHtml(prodi.nama)}.</div>`}
-    </div>`;
+    return `<tr><td class="statistik-kelas-cell">${escapeHtml(pc.kelas)}</td>${cells}</tr>`;
   }).join('');
+
+  const totalCells = weeks.map(w=>
+    SP_THRESHOLDS.map(t=>`<td class="mono" style="text-align:center;">${totalPerWeek[w][t.key]||''}</td>`).join('')
+  ).join('');
 
   return `
   <div class="panel">
     ${head}
-  </div>
-  ${weekBlocks}`;
+    <p style="font-size:12.5px; color:var(--ink-soft); margin:-6px 0 14px;">Arahkan kursor ke angka utk melihat nama mahasiswa.</p>
+    <div class="excel-table-scroll">
+      <table class="statistik-table">
+        <thead>
+          <tr><th rowspan="2">Kelas</th>${weekHeaderCells}</tr>
+          <tr>${spHeaderCells}</tr>
+        </thead>
+        <tbody>${rows}
+          <tr style="font-weight:700; background:var(--paper);">
+            <td class="statistik-kelas-cell">TOTAL</td>${totalCells}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>`;
 }
 
 /* ---- Rekap Kehadiran ---- */

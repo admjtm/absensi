@@ -3648,12 +3648,42 @@ function renderUpload(){
           ${state.role==='admin' ? `<input type="checkbox" class="missing-check" data-matkul-id="${m.matkulId}" data-matkul-nama="${escapeHtml(m.matkulNama)}" data-tanggal="${m.tanggal}">` : ''}
           <span>${escapeHtml(m.matkulNama)} &mdash; ${formatDate(m.tanggal)}</span>
           <button type="button" class="btn btn-ghost btn-sm" data-quick-libur="${m.matkulId}" data-quick-libur-tanggal="${m.tanggal}">Tandai dosen tidak masuk</button>
+          ${state.role==='admin' ? `<button type="button" class="btn btn-primary btn-sm" data-manual-rekap="${m.matkulId}" data-manual-rekap-tanggal="${m.tanggal}">&#9997; Isi Manual (Tanpa Dokumen)</button>` : ''}
         </li>`).join('')}
       </ul>
       ${state.role==='admin' ? `<div style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
         <button type="button" class="btn btn-primary btn-sm" id="bulkLiburSelectedBtn" disabled>Tandai dosen tidak masuk untuk sesi terpilih (<span id="missingSelectedCount">0</span>)</button>
       </div>` : ''}
     </div>` : '';
+
+  // Panel admin untuk mengisi kehadiran 1 mata kuliah + 1 tanggal secara MANUAL, tanpa
+  // menunggu Ketua Kelas upload dokumen scan -- untuk keadaan mendesak. Ini beda dari
+  // "Tandai Hadir Semua" (yang bekerja atas SEMUA sesi yang SUDAH ADA scan-nya dalam 1
+  // minggu penuh): fitur ini membuat 1 sesi baru untuk 1 matkul + 1 tanggal saja (biarpun
+  // belum ada scan sama sekali), lalu langsung membuka form isi kehadiran per mahasiswa
+  // seperti biasa. Kalau ternyata scan-nya belakangan tetap diupload Ketua Kelas untuk
+  // matkul+tanggal yang sama, sesi manual ini otomatis dipakai lagi (tidak dobel/duplikat).
+  const manualRekapPanel = state.role==='admin' ? `
+  <div class="panel" style="border-left:3px solid var(--primary);">
+    <div class="panel-head">
+      <div>
+        <h2>Isi Kehadiran Manual &mdash; Tanpa Upload Dokumen</h2>
+        <p>Untuk keadaan mendesak: langsung isi kehadiran 1 mata kuliah pada 1 tanggal tertentu, tanpa menunggu Ketua Kelas mengunggah scan absensi dulu. Hanya sesi (matkul + tanggal) ini yang dibuat -- sesi/mata kuliah lain tidak ikut terpengaruh.</p>
+      </div>
+    </div>
+    <form id="manualRekapForm" class="field-row">
+      <div class="field">
+        <label>Mata Kuliah</label>
+        <select name="matkulId" required ${state.matkul.length?'':'disabled'}>
+          <option value="">${state.matkul.length? 'Pilih mata kuliah' : 'Belum ada matkul'}</option>
+          ${state.matkul.map(m=>`<option value="${m.id}">${escapeHtml(m.nama)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Tanggal</label><input type="date" name="tanggal" required value="${todayStr()}"></div>
+      <button class="btn btn-primary" type="submit" ${(state.matkul.length && state.students.length)?'':'disabled'}>&#9997; Isi Kehadiran Sekarang</button>
+    </form>
+    ${!state.students.length ? `<div class="note">Belum ada data mahasiswa di kelas ini.</div>` : ''}
+  </div>` : '';
 
   // Form untuk menandai 1 sesi (matkul + tanggal) sebagai "TIDAK ADA KULIAH" (mis. dosen
   // tidak masuk) -- supaya sesi itu dikecualikan dari perhitungan Alpa otomatis, bukannya
@@ -3751,17 +3781,18 @@ function renderUpload(){
 
   const cards = sorted.map(sc=>`
     <div class="scan-card">
-      <img class="scan-thumb" src="${sc.dataUrl}" data-view-image="${sc.id}" alt="Scan absensi ${escapeHtml(sc.matkulNama)}">
+      ${sc.manual ? `<div class="scan-thumb" style="display:flex; align-items:center; justify-content:center; text-align:center; background:var(--paper); color:var(--ink-soft); font-size:11px; padding:8px;">&#9997;<br>Diisi manual<br>(tanpa dokumen)</div>` : `<img class="scan-thumb" src="${sc.dataUrl}" data-view-image="${sc.id}" alt="Scan absensi ${escapeHtml(sc.matkulNama)}">`}
       <div class="scan-meta">
         <p class="mk">${escapeHtml(sc.matkulNama)}</p>
         <p class="dt">${formatDate(sc.tanggal)}</p>
         <span class="stamp ${sc.flagSalah?'stamp-danger':(rekapNyambungKeRoster(sc)===false?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending'))}">${sc.flagSalah?'Berkas tidak sesuai':(rekapNyambungKeRoster(sc)===false?'Sudah Direkap, TIDAK SINKRON':(sc.direkap?'Sudah Direkap':'Sedang Direkap'))}</span>
+        ${sc.manual ? `<div class="flag-note">Sesi ini diisi <strong>manual</strong> oleh admin tanpa dokumen scan (keadaan mendesak).</div>` : ''}
         ${sc.flagSalah ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(sc.flagNote||'Berkas yang diunggah tidak sesuai dengan mata kuliah ini.')}</div>` : ''}
         ${!sc.flagSalah && rekapNyambungKeRoster(sc)===false ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>Rekap sesi ini sudah pernah diisi, tapi datanya tidak nyambung ke daftar mahasiswa yang sekarang (biasanya karena daftar mahasiswa sempat diedit/diimpor ulang). Klik "Edit rekap" dan isi ulang statusnya.</div>` : ''}
         <div class="scan-actions" style="margin-top:8px;">
-          <button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat</button>
+          ${sc.manual ? '' : `<button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat</button>`}
           ${state.role==='admin' ? `<button class="btn ${rekapNyambungKeRoster(sc)===false?'btn-danger-ghost':'btn-primary'} btn-sm" data-open-rekap="${sc.id}">${sc.direkap?'Edit rekap':'Isi rekap'}</button>` : ''}
-          ${state.role==='admin' ? `<button class="btn ${sc.flagSalah?'btn-ghost':'btn-danger-ghost'} btn-sm" data-flag-scan="${sc.id}">${sc.flagSalah?'Batalkan tanda':'Tandai salah matkul'}</button>` : ''}
+          ${state.role==='admin' && !sc.manual ? `<button class="btn ${sc.flagSalah?'btn-ghost':'btn-danger-ghost'} btn-sm" data-flag-scan="${sc.id}">${sc.flagSalah?'Batalkan tanda':'Tandai salah matkul'}</button>` : ''}
           ${state.role==='admin' ? `<button class="btn btn-danger-ghost btn-sm" data-del-scan="${sc.id}">Hapus</button>` : ''}
         </div>
       </div>
@@ -3776,6 +3807,7 @@ function renderUpload(){
       </div>
     </div>
     ${missingBanner}
+    ${manualRekapPanel}
     ${uploadForm}
     ${uploadGridWeekNavHtml}
     ${sorted.length ? `<div class="scan-grid">${cards}</div>` : `
@@ -4193,13 +4225,14 @@ function renderRekap(){
       <td>${escapeHtml(sc.matkulNama)}</td>
       <td>
         <span class="stamp ${sc.flagSalah?'stamp-danger':(rekapNyambungKeRoster(sc)===false?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending'))}">${sc.flagSalah?'Berkas tidak sesuai':(rekapNyambungKeRoster(sc)===false?'Sudah Direkap, TIDAK SINKRON':(sc.direkap?'Sudah Direkap':'Sedang Direkap'))}</span>
+        ${sc.manual ? `<div class="flag-note">Diisi <strong>manual</strong> tanpa dokumen scan (keadaan mendesak).</div>` : ''}
         ${sc.flagSalah ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(sc.flagNote||'Berkas yang diunggah tidak sesuai dengan mata kuliah ini.')}</div>` : ''}
         ${!sc.flagSalah && rekapNyambungKeRoster(sc)===false ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>Rekap sudah pernah diisi tapi tidak nyambung ke daftar mahasiswa sekarang. Klik "Edit rekap" dan isi ulang.</div>` : ''}
       </td>
       <td>
-        <button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat scan</button>
+        ${sc.manual ? '' : `<button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat scan</button>`}
         ${state.role==='admin' ? `<button class="btn ${rekapNyambungKeRoster(sc)===false?'btn-danger-ghost':'btn-primary'} btn-sm" data-open-rekap="${sc.id}">${sc.direkap?'Edit rekap':'Isi rekap'}</button>` : ''}
-        ${state.role==='admin' ? `<button class="btn ${sc.flagSalah?'btn-ghost':'btn-danger-ghost'} btn-sm" data-flag-scan="${sc.id}">${sc.flagSalah?'Batalkan tanda':'Tandai salah matkul'}</button>` : ''}
+        ${state.role==='admin' && !sc.manual ? `<button class="btn ${sc.flagSalah?'btn-ghost':'btn-danger-ghost'} btn-sm" data-flag-scan="${sc.id}">${sc.flagSalah?'Batalkan tanda':'Tandai salah matkul'}</button>` : ''}
       </td>
     </tr>`).join('');
 
@@ -4636,7 +4669,7 @@ function renderModal(){
       <div class="modal-overlay" data-close-modal="1">
         <div class="modal modal-wide" onclick="event.stopPropagation()">
           <div class="modal-head"><h3>${escapeHtml(sc.matkulNama)} &middot; ${formatDate(sc.tanggal)}</h3><button class="modal-close" data-close-modal="1">&times;</button></div>
-          <div class="modal-body"><div id="imgZoomWrap_view_${sc.id}">${renderZoomableImage(sc.dataUrl, 'Scan absensi', 'view_'+sc.id)}</div></div>
+          <div class="modal-body">${sc.dataUrl ? `<div id="imgZoomWrap_view_${sc.id}">${renderZoomableImage(sc.dataUrl, 'Scan absensi', 'view_'+sc.id)}</div>` : `<div class="note">Sesi ini diisi manual, tidak ada dokumen scan.</div>`}</div>
         </div>
       </div>`;
   }
@@ -4773,7 +4806,7 @@ function renderModal(){
             <button class="modal-close" data-close-modal="1">&times;</button>
           </div>
           <div class="modal-body">
-            <div id="imgZoomWrap_rekap_${sc.id}">${renderZoomableImage(sc.dataUrl, 'Scan absensi', 'rekap_'+sc.id)}</div>
+            ${sc.dataUrl ? `<div id="imgZoomWrap_rekap_${sc.id}">${renderZoomableImage(sc.dataUrl, 'Scan absensi', 'rekap_'+sc.id)}</div>` : `<div class="note" style="margin-bottom:14px;">&#9997; Sesi ini diisi <strong>manual</strong> oleh admin tanpa dokumen scan (keadaan mendesak) -- tidak ada foto untuk ditampilkan.</div>`}
             ${state.students.length ? `
             <form id="rekapForm" data-jam-sesi="${jamSesi}">
               <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; padding:10px 12px; background:var(--paper); border:1px solid var(--line); border-radius:8px;">
@@ -5213,6 +5246,18 @@ function attachHandlers(){
       alert('Gagal mengunggah gambar. Coba lagi.');
       submitBtn.disabled=false; submitBtn.textContent='↑ Upload Scan';
     }
+  });
+  document.querySelectorAll('[data-manual-rekap]').forEach(b=> b.addEventListener('click', ()=>{
+    openOrCreateManualSession(b.dataset.manualRekap, b.dataset.manualRekapTanggal);
+  }));
+  const manualRekapForm = document.getElementById('manualRekapForm');
+  if(manualRekapForm) manualRekapForm.addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const fd = new FormData(manualRekapForm);
+    const matkulId = fd.get('matkulId');
+    const tanggal = fd.get('tanggal');
+    if(!matkulId || !tanggal){ alert('Pilih mata kuliah dan tanggal dulu.'); return; }
+    openOrCreateManualSession(matkulId, tanggal);
   });
   document.querySelectorAll('[data-del-scan]').forEach(b=> b.addEventListener('click', ()=>{
     if(state.role!=='admin') return; // hanya Admin yang boleh menghapus scan
@@ -5692,6 +5737,37 @@ function cumulativeAJam_g(uptoDate, classData, studentId){
 // Mahasiswa yang beda (izin/sakit/alpa beneran) tetap bisa diedit ulang sesudahnya lewat
 // "Edit rekap" per sesi seperti biasa -- tombol ini cuma titik awal cepat, bukan pengganti
 // permanen kalau memang ada yang tidak hadir.
+// Buat (atau buka, kalau sudah ada) 1 sesi utk 1 matkul + 1 tanggal TANPA perlu dokumen
+// scan diupload dulu -- untuk keadaan mendesak, admin bisa langsung isi kehadiran per
+// mahasiswa. Beda dengan "Tandai Hadir Semua" (yang bekerja atas SEMUA sesi yang SUDAH
+// ADA scan-nya, dalam 1 minggu penuh): fungsi ini hanya menyentuh 1 matkul + 1 tanggal ini
+// saja, matkul/tanggal lain di minggu yang sama TIDAK ikut berubah. Kalau ternyata scan
+// dokumennya belakangan tetap diupload Ketua Kelas untuk matkul+tanggal yang sama, sesi
+// manual ini otomatis dipakai lagi (dicocokkan lewat scanMatchesMatkul_ + tanggal), tidak
+// membuat sesi dobel/duplikat.
+function openOrCreateManualSession(matkulId, tanggal){
+  if(state.role!=='admin') return; // hanya Admin yang boleh mengisi kehadiran manual
+  const mk = state.matkul.find(m=>m.id===matkulId);
+  if(!mk){ alert('Mata kuliah tidak ditemukan.'); return; }
+  if(!tanggal){ alert('Tanggal tidak valid.'); return; }
+  if(!state.students.length){ alert('Belum ada data mahasiswa di kelas ini.'); return; }
+  const existing = state.scans.find(s=> scanMatchesMatkul_(s, mk) && s.tanggal===tanggal);
+  if(existing){
+    // Sesi (dokumen ATAU manual) untuk matkul+tanggal ini sudah ada -- langsung buka
+    // rekapnya saja, jangan bikin sesi kedua yang bikin dobel/membingungkan.
+    state.modal = { type:'rekap', id: existing.id };
+    render();
+    return;
+  }
+  const newScan = { id:uid(), matkulId:mk.id, matkulNama:mk.nama, tanggal, dataUrl:null, manual:true, uploadedAt:new Date().toISOString(), direkap:false, flagSalah:false, flagNote:'' };
+  state.scans.push(newScan);
+  state.modal = { type:'rekap', id:newScan.id };
+  render();
+  safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
+    if(!latest.some(s=>s.id===newScan.id)) latest.push(newScan);
+    return latest;
+  });
+}
 async function bulkMarkWeekHadir(week){
   try{
     if(!state.semesterStart){ alert('Atur Tanggal Mulai Semester dulu di tab Mata Kuliah.'); return; }

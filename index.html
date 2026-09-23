@@ -2769,13 +2769,22 @@ async function loadClass(){
       // otomatis dirapikan sendiri tanpa perlu hapus manual satu-satu.
       const dedupMap = new Map();
       state.matkul.forEach(m=>{
+        ensureHariHistory(m);
         const key = m.nama.trim();
         if(!dedupMap.has(key)){
-          dedupMap.set(key, {...m, hari:[...(m.hari||[])]});
+          dedupMap.set(key, {...m, hari:[...(m.hari||[])], hariHistory:m.hariHistory.map(h=>({...h, hari:[...h.hari]}))});
         } else {
           const existing = dedupMap.get(key);
           (m.hari||[]).forEach(h=>{ if(!existing.hari.includes(h)) existing.hari.push(h); });
           if(!existing.jam && m.jam) existing.jam = m.jam;
+          // Gabungkan riwayat jadwal juga (union hari untuk minggu mulai yang sama), supaya
+          // penggabungan duplikat tidak diam-diam menghapus riwayat perombakan jadwal.
+          m.hariHistory.forEach(h=>{
+            const found = existing.hariHistory.find(e=>e.mulaiMinggu===h.mulaiMinggu);
+            if(found){ h.hari.forEach(d=>{ if(!found.hari.includes(d)) found.hari.push(d); }); }
+            else existing.hariHistory.push({...h, hari:[...h.hari]});
+          });
+          existing.hariHistory.sort((a,b)=>a.mulaiMinggu-b.mulaiMinggu);
         }
       });
       const deduped = Array.from(dedupMap.values());
@@ -3472,10 +3481,54 @@ function hariArrayOf(mk){
   if(!mk || !mk.hari) return [];
   return Array.isArray(mk.hari) ? mk.hari : [mk.hari];
 }
-// Migrasi data matkul lama (hari berupa string tunggal / null) menjadi array in-place,
-// supaya seluruh kode lain bisa selalu mengasumsikan m.hari adalah array.
+// ---- RIWAYAT JADWAL (perombakan jadwal permanen mulai minggu tertentu) ----
+// mk.hariHistory menyimpan RIWAYAT hari kuliah suatu matkul sepanjang semester, format:
+//   [{ mulaiMinggu:1, hari:['Senin','Kamis'] }, { mulaiMinggu:3, hari:['Selasa','Kamis'] }, ...]
+// Artinya: sejak minggu 1 s/d sebelum minggu 3 jadwalnya Senin & Kamis, MULAI minggu 3 dan
+// seterusnya jadwalnya berubah jadi Selasa & Kamis. mk.hari sendiri tetap dipertahankan
+// sebagai "jadwal yang berlaku SAAT INI" (dipakai form tambah matkul baru, cek umum,
+// checkbox di tabel Mata Kuliah) supaya seluruh kode lama yang belum tahu soal riwayat
+// tetap jalan seperti biasa. Yang membedakan hasil rekap/Excel per minggu SEKARANG adalah
+// hariArrayOfAtWeek/hariArrayOfAtDate di bawah -- keduanya membaca hariHistory supaya
+// minggu-minggu yang SUDAH LEWAT tetap memakai jadwal lama, walau jadwalnya sudah diganti
+// permanen untuk minggu-minggu berikutnya. Kalau matkul belum pernah punya riwayat (data
+// lama), otomatis dianggap 1 entri tunggal berlaku sejak minggu 1 = hariArrayOf(mk) sekarang.
+function ensureHariHistory(mk){
+  if(!mk) return mk;
+  mk.hari = hariArrayOf(mk);
+  if(!Array.isArray(mk.hariHistory) || !mk.hariHistory.length){
+    mk.hariHistory = [{ mulaiMinggu:1, hari:[...mk.hari] }];
+  } else {
+    mk.hariHistory.forEach(h=>{
+      h.hari = Array.isArray(h.hari) ? h.hari : (h.hari ? [h.hari] : []);
+      h.mulaiMinggu = h.mulaiMinggu || 1;
+    });
+    mk.hariHistory.sort((a,b)=>a.mulaiMinggu-b.mulaiMinggu);
+    if(mk.hariHistory[0].mulaiMinggu !== 1) mk.hariHistory[0].mulaiMinggu = 1;
+  }
+  return mk;
+}
+// Hari kuliah suatu matkul yang BERLAKU pada minggu ke-`week` tertentu (1 = minggu pertama
+// semester), berdasarkan hariHistory. week bernilai null/undefined -> pakai jadwal terkini.
+function hariArrayOfAtWeek(mk, week){
+  if(!mk) return [];
+  const hist = (Array.isArray(mk.hariHistory) && mk.hariHistory.length) ? mk.hariHistory : [{mulaiMinggu:1, hari:hariArrayOf(mk)}];
+  if(week==null) return hariArrayOf(mk);
+  let effective = hist[0];
+  hist.forEach(h=>{ if((h.mulaiMinggu||1) <= week) effective = h; });
+  return Array.isArray(effective.hari) ? effective.hari : (effective.hari ? [effective.hari] : []);
+}
+// Sama seperti di atas, tapi menerima tanggal langsung (dikonversi ke nomor minggu memakai
+// Tanggal Mulai Semester). Ini yang dipakai di semua perhitungan sesi PER TANGGAL.
+function hariArrayOfAtDate(mk, dateStr, semesterStart){
+  const ss = semesterStart!==undefined ? semesterStart : state.semesterStart;
+  return hariArrayOfAtWeek(mk, weekIndexForDate(dateStr, ss));
+}
+// Migrasi data matkul lama (hari berupa string tunggal / null, atau belum punya riwayat)
+// menjadi array + hariHistory in-place, supaya seluruh kode lain bisa selalu mengasumsikan
+// m.hari adalah array dan m.hariHistory selalu ada.
 function normalizeMatkulHari(){
-  state.matkul.forEach(m=>{ m.hari = hariArrayOf(m); });
+  state.matkul.forEach(ensureHariHistory);
 }
 function renderMatkul(){
   return `
@@ -3537,6 +3590,11 @@ function renderMatkul(){
                     </label>`).join('')}
                 </div>
                 ${!(m.hari&&m.hari.length) ? `<div style="color:var(--ink-soft); font-size:11px; margin-top:6px;">&mdash; Belum diatur &mdash;</div>` : ''}
+                ${(m.hariHistory && m.hariHistory.length>1) ? `
+                <div class="mono" style="font-size:10px; color:var(--ink-soft); margin-top:6px; line-height:1.6;">
+                  ${m.hariHistory.map(h=>`Mulai minggu ${h.mulaiMinggu}: ${(h.hari&&h.hari.length)?h.hari.join(', '):'(tidak ada)'}`).join('<br>')}
+                </div>` : ''}
+                <button type="button" class="btn btn-ghost btn-sm" data-reschedule-matkul="${m.id}" style="margin-top:6px; font-size:11px;">&#128260; Ubah jadwal mulai minggu tertentu</button>
               </td>
               <td>
                 <button class="btn btn-ghost btn-sm" data-edit-matkul="${m.id}">Edit</button>
@@ -3750,7 +3808,7 @@ async function loadStatistikData(prodiKey){
       // pakai bawaan SEED_MATKUL supaya jadwalnya tetap kelihatan, sama seperti loadClass().
       matkul = SEED_MATKUL[base] ? SEED_MATKUL[base].map(m=>({ id:uid(), nama:m.nama, jam:m.jam, hari: m.hari?[m.hari]:[] })) : [];
     }
-    matkul.forEach(m=>{ m.hari = hariArrayOf(m); });
+    matkul.forEach(ensureHariHistory);
     return {
       kelas,
       matkul,
@@ -3775,7 +3833,10 @@ function computeWeekStatus(classData, weekNum){
   const cap = saturday < today ? saturday : today;
   let totalSesi = 0, uploaded = 0, direkap = 0;
   matkul.forEach(mk=>{
-    const hariSet = hariArrayOf(mk);
+    // Pakai jadwal yang BERLAKU pada minggu ini (weekNum), bukan jadwal terkini -- supaya
+    // minggu-minggu lama tetap dihitung pakai jadwal lama walau sudah ada perombakan jadwal
+    // permanen di minggu-minggu berikutnya.
+    const hariSet = hariArrayOfAtWeek(mk, weekNum);
     if(!hariSet.length) return;
     for(let d=new Date(monday); d<=cap; d=addDaysDate(d,1)){
       const dn = dayNameOfDate(d);
@@ -3903,7 +3964,7 @@ async function loadRekapSPData(prodiKey){
       // Kelas ini belum pernah dibuka sama sekali -- pakai bawaan SEED_MATKUL, sama seperti loadClass().
       matkul = SEED_MATKUL[base] ? SEED_MATKUL[base].map(m=>({ id:uid(), nama:m.nama, jam:m.jam, hari: m.hari?[m.hari]:[] })) : [];
     }
-    matkul.forEach(m=>{ m.hari = hariArrayOf(m); });
+    matkul.forEach(ensureHariHistory);
     let students = rosterRes.value;
     if(!students){
       students = SEED_STUDENTS[base] ? SEED_STUDENTS[base].map(s=>({id:uid(), nama:s.nama, nim:s.nim})) : [];
@@ -4347,7 +4408,10 @@ function renderWeeklyRecap(){
   const matkulByHari = {};
   DAYS_ID.forEach((day,dIdx)=>{
     const dateForDay = toISO(addDaysDate(monday, dIdx));
-    const scheduled = state.matkul.filter(m=>hariArrayOf(m).includes(day));
+    // Pakai jadwal yang berlaku PADA MINGGU INI (hariArrayOfAtWeek), bukan jadwal terkini --
+    // supaya kalau jadwal sudah diganti permanen di minggu-minggu berikutnya, minggu yang
+    // sedang dilihat di sini (kalau itu minggu lama) tetap tersusun sesuai jadwal lamanya.
+    const scheduled = state.matkul.filter(m=>hariArrayOfAtWeek(m, week).includes(day));
     const scheduledIds = new Set(scheduled.map(m=>m.id));
     const pengganti = state.matkul.filter(m=> !scheduledIds.has(m.id) && state.scans.some(s=>scanMatchesMatkul_(s, m) && s.tanggal===dateForDay));
     matkulByHari[day] = [...scheduled, ...pengganti];
@@ -4378,7 +4442,7 @@ function renderWeeklyRecap(){
     dayHeaderCells += `<th colspan="${list.length*3}">${day}, ${fmtDDMMYYYY(dateForDay)}</th>`;
     list.forEach(mk=>{
       jumlahMatkulTampil++;
-      const isPengganti = !hariArrayOf(mk).includes(day);
+      const isPengganti = !hariArrayOfAtWeek(mk, week).includes(day);
       matkulSubHeaderCells += `<th colspan="3" style="font-weight:600;">${escapeHtml(mk.nama)}<br><span class="mono" style="font-weight:400;">${mk.jam||1}j</span>${isPengganti ? `<br><span style="font-weight:600; color:var(--primary); font-size:9px;">(Pengganti)</span>` : ''}</th>`;
       matkulSIACells += `<th style="font-weight:500;">S</th><th style="font-weight:500;">I</th><th style="font-weight:500;">A</th>`;
     });
@@ -5005,7 +5069,7 @@ function attachHandlers(){
     if(!nama || !jam || jam<=0) return;
     if(state.matkul.some(m=>m.nama.trim()===nama)){ alert('Mata kuliah dengan nama ini sudah ada di daftar.'); return; }
     if(submitBtn) submitBtn.disabled = true;
-    const newMk = {id:uid(), nama, jam, hari};
+    const newMk = {id:uid(), nama, jam, hari, hariHistory:[{mulaiMinggu:1, hari:[...hari]}]};
     state.matkul.push(newMk);
     state.matkulDirtyAt = Date.now();
     render();
@@ -5049,21 +5113,62 @@ function attachHandlers(){
   document.querySelectorAll('[data-toggle-hari]').forEach(chk=> chk.addEventListener('change', ()=>{
     const mk = state.matkul.find(m=>m.id===chk.dataset.toggleHari);
     if(!mk) return;
-    if(!Array.isArray(mk.hari)) mk.hari = mk.hari ? [mk.hari] : [];
+    ensureHariHistory(mk);
+    // Checkbox di tabel ini mengedit jadwal yang SEDANG BERLAKU MINGGU INI (bukan menulis
+    // ulang riwayat minggu-minggu yang sudah lewat) -- cari entri riwayat yang aktif sekarang.
+    const curWeek = state.semesterStart ? (weekIndexForDate(todayStr(), state.semesterStart)||1) : 1;
+    let active = mk.hariHistory[0];
+    mk.hariHistory.forEach(h=>{ if((h.mulaiMinggu||1) <= curWeek) active = h; });
     const day = chk.value;
     if(chk.checked){
-      if(!mk.hari.includes(day)) mk.hari.push(day);
+      if(!active.hari.includes(day)) active.hari.push(day);
     } else {
-      mk.hari = mk.hari.filter(h=>h!==day);
+      active.hari = active.hari.filter(h=>h!==day);
     }
+    mk.hari = hariArrayOfAtWeek(mk, curWeek);
     const toggleId = mk.id;
     const newHari = [...mk.hari];
+    const newHistory = mk.hariHistory.map(h=>({...h, hari:[...h.hari]}));
     state.matkulDirtyAt = Date.now();
     safeSaveArray('matkul:'+keyBase(), 'matkul', latest=>{
       const idx = latest.findIndex(m=>m.id===toggleId);
-      if(idx>=0) latest[idx] = {...latest[idx], hari:newHari};
+      if(idx>=0) latest[idx] = {...latest[idx], hari:newHari, hariHistory:newHistory};
       return latest;
     });
+  }));
+  // Ubah jadwal PERMANEN mulai minggu tertentu ke depan, TANPA mengubah minggu-minggu
+  // sebelumnya -- ini yang menjawab kasus "matkul pindah hari mulai minggu ke-3 dst",
+  // supaya rekap/Excel minggu 1-2 tetap terhitung pakai jadwal lama seperti seharusnya.
+  document.querySelectorAll('[data-reschedule-matkul]').forEach(b=> b.addEventListener('click', ()=>{
+    const mk = state.matkul.find(m=>m.id===b.dataset.rescheduleMatkul);
+    if(!mk) return;
+    ensureHariHistory(mk);
+    const curWeek = state.semesterStart ? (weekIndexForDate(todayStr(), state.semesterStart)||1) : 1;
+    const wkStr = prompt('Jadwal baru berlaku MULAI minggu ke berapa?\n(Minggu-minggu SEBELUM itu tetap memakai jadwal lama seperti sekarang, tidak ikut berubah)', String(curWeek||1));
+    if(wkStr===null) return;
+    const wk = parseInt(wkStr,10);
+    if(!wk || wk<1){ alert('Nomor minggu tidak valid.'); return; }
+    const hariSaatIni = hariArrayOfAtWeek(mk, wk);
+    const hariStr = prompt('Hari kuliah baru mulai minggu ke-'+wk+' (pisahkan dengan koma).\nPilihan hari: '+HARI_LIST.join(', '), hariSaatIni.join(', '));
+    if(hariStr===null) return;
+    const hariBaru = hariStr.split(',').map(s=>s.trim()).filter(Boolean).filter(h=>HARI_LIST.includes(h));
+    if(hariStr.trim() && !hariBaru.length){ alert('Tidak ada nama hari yang dikenali. Gunakan: '+HARI_LIST.join(', ')); return; }
+    mk.hariHistory = mk.hariHistory.filter(h=>h.mulaiMinggu!==wk);
+    mk.hariHistory.push({ mulaiMinggu:wk, hari:hariBaru });
+    mk.hariHistory.sort((a,b)=>a.mulaiMinggu-b.mulaiMinggu);
+    if(mk.hariHistory[0].mulaiMinggu!==1) mk.hariHistory.unshift({ mulaiMinggu:1, hari:[...(mk.hari||[])] });
+    mk.hari = hariArrayOfAtWeek(mk, curWeek);
+    const editId = mk.id;
+    const newHistory = mk.hariHistory.map(h=>({...h, hari:[...h.hari]}));
+    const newHari = [...mk.hari];
+    state.matkulDirtyAt = Date.now();
+    render();
+    safeSaveArray('matkul:'+keyBase(), 'matkul', latest=>{
+      const idx = latest.findIndex(m=>m.id===editId);
+      if(idx>=0) latest[idx] = {...latest[idx], hari:newHari, hariHistory:newHistory};
+      return latest;
+    });
+    alert('Tersimpan. Mulai minggu '+wk+', jadwal '+escapeHtml(mk.nama)+': '+(hariBaru.length?hariBaru.join(', '):'(tidak ada hari)')+'. Minggu-minggu sebelum minggu '+wk+' tetap memakai jadwal lama.');
   }));
   const semesterStartInput = document.getElementById('semesterStartInput');
   if(semesterStartInput) semesterStartInput.addEventListener('change', ()=>{
@@ -5356,14 +5461,17 @@ function dayNameOfDate(d){
 // sama sekali tetap dihitung Alpa, bukan hilang begitu saja dari rekap.
 function expectedSessionDatesForMatkul(mk, uptoDate){
   if(!state.semesterStart) return [];
-  const hariSet = hariArrayOf(mk);
-  if(!hariSet.length) return [];
   const start = getMondayOf(parseISODate(state.semesterStart));
   const cap = uptoDate < todayDateCap() ? uptoDate : todayDateCap();
   const dates = [];
+  // Jadwal dicek PER TANGGAL (hariArrayOfAtDate), bukan sekali di awal -- supaya kalau
+  // jadwal matkul ini pernah diganti permanen di tengah semester, tanggal-tanggal sebelum
+  // pergantian tetap dihitung pakai jadwal lama dan tanggal sesudahnya pakai jadwal baru.
   for(let d=new Date(start); d<=cap; d=addDaysDate(d,1)){
     const dn = dayNameOfDate(d);
-    if(dn && hariSet.includes(dn)) dates.push(toISO(d));
+    if(!dn) continue;
+    const dateStr = toISO(d);
+    if(hariArrayOfAtDate(mk, dateStr, state.semesterStart).includes(dn)) dates.push(dateStr);
   }
   return dates;
 }
@@ -5482,7 +5590,7 @@ function sessionStatusForDate(mk, dateStr, studentId){
   const jam = mk.jam||1;
   const d = parseISODate(dateStr);
   const dn = dayNameOfDate(d);
-  const terjadwalHariItu = dn && hariArrayOf(mk).includes(dn);
+  const terjadwalHariItu = dn && hariArrayOfAtDate(mk, dateStr, state.semesterStart).includes(dn);
   const sc = findScanForSession_(mk, dateStr);
   const sudahLewat = d <= todayDateCap();
   if(isLiburSesi(mk.id, dateStr) && !sc) return {S:0,I:0,A:0}; // ditandai dosen tidak masuk/libur -> tidak dihitung
@@ -5527,14 +5635,14 @@ function cumulativeSIA(uptoDate, matkulId, studentId){
 // (bukan cuma kelas yang sedang aktif/dibuka di layar admin sekarang).
 function expectedSessionDatesForMatkul_g(mk, uptoDate, semesterStart){
   if(!semesterStart) return [];
-  const hariSet = hariArrayOf(mk);
-  if(!hariSet.length) return [];
   const start = getMondayOf(parseISODate(semesterStart));
   const cap = uptoDate < todayDateCap() ? uptoDate : todayDateCap();
   const dates = [];
   for(let d=new Date(start); d<=cap; d=addDaysDate(d,1)){
     const dn = dayNameOfDate(d);
-    if(dn && hariSet.includes(dn)) dates.push(toISO(d));
+    if(!dn) continue;
+    const dateStr = toISO(d);
+    if(hariArrayOfAtDate(mk, dateStr, semesterStart).includes(dn)) dates.push(dateStr);
   }
   return dates;
 }
@@ -5769,7 +5877,10 @@ function buildRekapMingguanBlocks_(weekNumbers){
     const matkulByHari = {};
     DAYS_ID.forEach((day,dIdx)=>{
       const dateForDay = toISO(addDaysDate(monday, dIdx));
-      const scheduled = state.matkul.filter(m=>hariArrayOf(m).includes(day));
+      // Sama seperti di layar (renderWeeklyRecap): pakai jadwal yang berlaku PADA MINGGU INI,
+      // bukan jadwal terkini, supaya blok minggu lama di Excel tidak ikut berubah kalau jadwal
+      // sudah diganti permanen mulai minggu-minggu berikutnya.
+      const scheduled = state.matkul.filter(m=>hariArrayOfAtWeek(m, week).includes(day));
       const scheduledIds = new Set(scheduled.map(m=>m.id));
       const pengganti = state.matkul.filter(m=> !scheduledIds.has(m.id) && state.scans.some(s=>scanMatchesMatkul_(s, m) && s.tanggal===dateForDay));
       matkulByHari[day] = [...scheduled, ...pengganti];
@@ -5799,7 +5910,7 @@ function buildRekapMingguanBlocks_(weekNumbers){
       const dayStartCol = col;
       const dateForDay = addDaysDate(monday, dIdx);
       list.forEach(mk=>{
-        const isPengganti = !hariArrayOf(mk).includes(day);
+        const isPengganti = !hariArrayOfAtWeek(mk, week).includes(day);
         setCell(rSub,col,mk.nama + (isPengganti ? ' (Pengganti)' : '')); mergeRange(rSub,col,rSub,col+2);
         setCell(rJam,col,(mk.jam||1)+' jam'); mergeRange(rJam,col,rJam,col+2);
         setCell(rSIA,col,'S'); setCell(rSIA,col+1,'I'); setCell(rSIA,col+2,'A');

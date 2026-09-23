@@ -3781,12 +3781,12 @@ function renderUpload(){
 
   const cards = sorted.map(sc=>`
     <div class="scan-card">
-      ${sc.manual ? `<div class="scan-thumb" style="display:flex; align-items:center; justify-content:center; text-align:center; background:var(--paper); color:var(--ink-soft); font-size:11px; padding:8px;">&#9997;<br>Diisi manual<br>(tanpa dokumen)</div>` : `<img class="scan-thumb" src="${sc.dataUrl}" data-view-image="${sc.id}" alt="Scan absensi ${escapeHtml(sc.matkulNama)}">`}
+      ${sc.manual ? `<div class="scan-thumb" style="display:flex; align-items:center; justify-content:center; text-align:center; background:var(--paper); color:var(--ink-soft); font-size:11px; padding:8px;">${state.role==='admin' ? '&#9997;<br>Diisi manual<br>(tanpa dokumen)' : 'Tidak ada<br>dokumen'}</div>` : `<img class="scan-thumb" src="${sc.dataUrl}" data-view-image="${sc.id}" alt="Scan absensi ${escapeHtml(sc.matkulNama)}">`}
       <div class="scan-meta">
         <p class="mk">${escapeHtml(sc.matkulNama)}</p>
         <p class="dt">${formatDate(sc.tanggal)}</p>
         <span class="stamp ${sc.flagSalah?'stamp-danger':(rekapNyambungKeRoster(sc)===false?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending'))}">${sc.flagSalah?'Berkas tidak sesuai':(rekapNyambungKeRoster(sc)===false?'Sudah Direkap, TIDAK SINKRON':(sc.direkap?'Sudah Direkap':'Sedang Direkap'))}</span>
-        ${sc.manual ? `<div class="flag-note">Sesi ini diisi <strong>manual</strong> oleh admin tanpa dokumen scan (keadaan mendesak).</div>` : ''}
+        ${sc.manual && state.role==='admin' ? `<div class="flag-note">Sesi ini diisi <strong>manual</strong> oleh admin tanpa dokumen scan (keadaan mendesak).</div>` : ''}
         ${sc.flagSalah ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(sc.flagNote||'Berkas yang diunggah tidak sesuai dengan mata kuliah ini.')}</div>` : ''}
         ${!sc.flagSalah && rekapNyambungKeRoster(sc)===false ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>Rekap sesi ini sudah pernah diisi, tapi datanya tidak nyambung ke daftar mahasiswa yang sekarang (biasanya karena daftar mahasiswa sempat diedit/diimpor ulang). Klik "Edit rekap" dan isi ulang statusnya.</div>` : ''}
         <div class="scan-actions" style="margin-top:8px;">
@@ -4225,7 +4225,7 @@ function renderRekap(){
       <td>${escapeHtml(sc.matkulNama)}</td>
       <td>
         <span class="stamp ${sc.flagSalah?'stamp-danger':(rekapNyambungKeRoster(sc)===false?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending'))}">${sc.flagSalah?'Berkas tidak sesuai':(rekapNyambungKeRoster(sc)===false?'Sudah Direkap, TIDAK SINKRON':(sc.direkap?'Sudah Direkap':'Sedang Direkap'))}</span>
-        ${sc.manual ? `<div class="flag-note">Diisi <strong>manual</strong> tanpa dokumen scan (keadaan mendesak).</div>` : ''}
+        ${sc.manual && state.role==='admin' ? `<div class="flag-note">Diisi <strong>manual</strong> tanpa dokumen scan (keadaan mendesak).</div>` : ''}
         ${sc.flagSalah ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(sc.flagNote||'Berkas yang diunggah tidak sesuai dengan mata kuliah ini.')}</div>` : ''}
         ${!sc.flagSalah && rekapNyambungKeRoster(sc)===false ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>Rekap sudah pernah diisi tapi tidak nyambung ke daftar mahasiswa sekarang. Klik "Edit rekap" dan isi ulang.</div>` : ''}
       </td>

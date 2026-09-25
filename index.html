@@ -444,6 +444,45 @@
     .rekap-pane-form th[style*="150px"]{ width:130px !important; }
     .rekap-pane-form .rekap-actions{ position:sticky; bottom:0; background:#fff; padding:10px 0 2px; margin-top:8px !important; border-top:1px solid var(--line); z-index:3; }
   }
+
+  /* ---- Modal "Isi Rekap" di MOBILE/tablet (<900px): tampilan tetap atas-bawah (bukan
+     kolom kiri-kanan seperti layar lebar), TAPI foto scan dibuat lebih pendek dan langsung
+     "terkunci" di posisinya di atas form -- jadi tidak perlu scroll bolak-balik ke atas
+     tiap mau mencocokkan tanda tangan/paraf dengan baris mahasiswa yang sedang diisi.
+     Kalau tulisan di foto kurang jelas, tombol "Perbesar foto" membuat foto mengambil
+     alih hampir seluruh layar (form disembunyikan sementara) supaya bisa dibaca dengan
+     pinch-zoom leluasa, lalu "Kembali ke rekap" mengembalikan ke tampilan isi form. */
+  .rekap-img-toggle-mobile{ display:none; }
+  @media (max-width:899px){
+    .modal.modal-split{
+      height:94vh; max-height:94vh; display:flex; flex-direction:column; overflow:hidden;
+    }
+    .modal.modal-split .modal-body{ flex:1; min-height:0; overflow:hidden; padding:14px; }
+    .modal.modal-split .rekap-split{ display:flex; flex-direction:column; height:100%; gap:0; }
+    .modal.modal-split .rekap-pane-img{
+      flex:0 0 auto; overflow:hidden; padding-bottom:8px; margin-bottom:10px;
+      border-bottom:1px solid var(--line);
+    }
+    .modal.modal-split .rekap-pane-img .img-zoom-viewport{ max-height:24vh; }
+    .modal.modal-split .rekap-pane-form{ flex:1; min-height:0; overflow:auto; }
+    .modal.modal-split .rekap-pane-form .rekap-actions{
+      position:sticky; bottom:0; background:#fff; padding:10px 0 2px;
+      margin-top:8px !important; border-top:1px solid var(--line);
+    }
+    .modal.modal-split .rekap-pane-form table thead th{
+      position:sticky; top:0; z-index:2; background:#F4F6F8; box-shadow:0 1px 0 var(--line-strong);
+    }
+    .rekap-img-toggle-mobile{
+      display:inline-flex; margin-bottom:6px; font-size:11.5px; padding:5px 10px;
+    }
+    /* Mode "Perbesar foto" aktif: foto mengambil alih hampir semua ruang modal,
+       tabel rekap disembunyikan sementara supaya tidak ikut mengecil/berdesakan. */
+    .modal.modal-split.rekap-img-expanded .rekap-pane-img{
+      flex:1 1 auto; margin-bottom:0; border-bottom:none; padding-bottom:0;
+    }
+    .modal.modal-split.rekap-img-expanded .rekap-pane-img .img-zoom-viewport{ max-height:none; height:100%; }
+    .modal.modal-split.rekap-img-expanded .rekap-pane-form{ display:none; }
+  }
   .modal-head{display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line); position:sticky; top:0; background:#fff;}
   .modal-head h3{margin:0; font-size:15px;}
   .modal-close{border:none; background:var(--paper); width:28px; height:28px; border-radius:50%; font-size:15px; color:var(--ink-soft);}
@@ -4826,7 +4865,7 @@ function renderModal(){
           </div>
           <div class="modal-body">
            <div class="${sc.dataUrl ? 'rekap-split' : ''}">
-            ${sc.dataUrl ? `<div class="rekap-pane rekap-pane-img"><div id="imgZoomWrap_rekap_${sc.id}">${renderZoomableImage(sc.dataUrl, 'Scan absensi', 'rekap_'+sc.id)}</div></div>` : `<div class="note" style="margin-bottom:14px;">&#9997; Sesi ini diisi <strong>manual</strong> oleh admin tanpa dokumen scan (keadaan mendesak) -- tidak ada foto untuk ditampilkan.</div>`}
+            ${sc.dataUrl ? `<div class="rekap-pane rekap-pane-img"><button type="button" class="btn btn-ghost btn-sm rekap-img-toggle-mobile" data-toggle-rekap-img="1">&#128269; Perbesar foto</button><div id="imgZoomWrap_rekap_${sc.id}">${renderZoomableImage(sc.dataUrl, 'Scan absensi', 'rekap_'+sc.id)}</div></div>` : `<div class="note" style="margin-bottom:14px;">&#9997; Sesi ini diisi <strong>manual</strong> oleh admin tanpa dokumen scan (keadaan mendesak) -- tidak ada foto untuk ditampilkan.</div>`}
             <div class="rekap-pane rekap-pane-form">
             ${state.students.length ? `
             <form id="rekapForm" data-jam-sesi="${jamSesi}">
@@ -4863,6 +4902,17 @@ function renderModal(){
   }
   if(state.modal.type==='rekap'){
     attachImgZoomHandlers(root, 'rekap_'+state.modal.id);
+    // Tombol "Perbesar foto" (khusus tampilan mobile/tablet, lihat CSS .rekap-img-toggle-mobile):
+    // toggle mode dimana foto scan mengambil alih hampir seluruh modal (form disembunyikan
+    // sementara) supaya lebih leluasa di-pinch-zoom saat tulisan di lembar absensi kurang jelas.
+    const toggleBtn = root.querySelector('[data-toggle-rekap-img]');
+    const modalEl = root.querySelector('.modal.modal-split');
+    if(toggleBtn && modalEl){
+      toggleBtn.addEventListener('click', ()=>{
+        const isExpanded = modalEl.classList.toggle('rekap-img-expanded');
+        toggleBtn.innerHTML = isExpanded ? '&#10005; Kembali ke rekap' : '&#128269; Perbesar foto';
+      });
+    }
   }
   const rekapForm = document.getElementById('rekapForm');
   if(rekapForm){

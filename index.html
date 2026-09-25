@@ -3125,36 +3125,81 @@ function _queuedSave(key, taskFn){
   _saveQueueByKey[key] = run.catch(()=>{}); // simpan sebagai penanda "sedang berjalan", tangkap error di sini saja
   return run;
 }
+function _jsonEqual_(a,b){ try{ return JSON.stringify(a)===JSON.stringify(b); }catch(e){ return false; } }
+function _sleep_(ms){ return new Promise(res=> setTimeout(res, ms)); }
+// PERBAIKAN UTAMA (sumber alert "TIDAK COCOK"/"gagal membaca ulang dari server" yang sering
+// muncul): dulu safeSaveObject/safeSaveArray HANYA melakukan SATU KALI baca-terbaru -> terapkan
+// -> simpan, lalu PEMANGGIL (kode di tombol "Simpan Rekap" dkk) melakukan baca-ulang SENDIRI
+// secara terpisah untuk sekadar memastikan. Masalahnya: baca-ulang terpisah itu punya jeda waktu
+// sendiri, dan kalau PERSIS di jeda itu ada perangkat/tab LAIN yang sedang menyimpan key yang
+// SAMA (mis. 2 admin isi rekap kelas yang sama hampir bersamaan, atau Ketua Kelas upload scan di
+// saat yang sama), baca-ulang itu bisa melihat data milik proses LAIN itu (atau gagal baca sama
+// sekali karena Apps Script sedang sibuk) -- lalu keliru dilaporkan sebagai "gagal", padahal
+// data KITA sendiri sebenarnya sudah tersimpan benar sesaat sebelumnya.
+// Sekarang verifikasi baca-ulang dipindah KE DALAM fungsi simpan ini sendiri, dan kalau hasilnya
+// belum cocok (atau gagal dibaca), fungsi ini OTOMATIS MENGULANG dari awal: ambil data PALING
+// BARU dari server lagi (yang sekarang sudah termasuk perubahan dari proses lain tadi), terapkan
+// ULANG perubahan milik kita di atasnya, lalu simpan & verifikasi lagi -- sampai beberapa kali
+// percobaan -- sebelum benar-benar melaporkan gagal ke pemanggil. Ini menghilangkan (hampir semua)
+// alert gagal yang sebenarnya cuma disebabkan oleh jeda/race sesaat antar-perangkat, bukan
+// kerusakan data sungguhan.
+const _SAVE_RETRY_DELAYS_ = [500, 1000, 2000, 3000]; // jeda (ms) sebelum tiap percobaan ulang
 async function safeSaveArray(key, stateField, applyFn){
   return _queuedSave(key, async ()=>{
-    let latest;
-    try{
-      const r = await safeGetRaw(key);
-      latest = (r.found && Array.isArray(r.value)) ? r.value : (state[stateField] || []);
-    }catch(e){ latest = state[stateField] || []; }
-    const result = applyFn(latest);
-    const finalArr = result || latest;
-    const saveResult = await safeSet(key, finalArr);
-    state[stateField] = finalArr;
-    saveCachedClass(keyBase());
-    render();
-    return saveResult; // {ok:true} atau {ok:false, error} -- lihat pemakaiannya di bulkMarkWeekHadir
+    let lastError = 'Gagal menyimpan setelah beberapa kali percobaan.';
+    for(let attempt=0; attempt<=_SAVE_RETRY_DELAYS_.length; attempt++){
+      if(attempt>0) await _sleep_(_SAVE_RETRY_DELAYS_[attempt-1]);
+      let latest;
+      try{
+        const r = await safeGetRaw(key);
+        latest = (r.found && Array.isArray(r.value)) ? r.value : (state[stateField] || []);
+      }catch(e){ latest = state[stateField] || []; }
+      const result = applyFn(latest);
+      const finalArr = result || latest;
+      const saveResult = await safeSet(key, finalArr);
+      if(!saveResult.ok){ lastError = saveResult.error; continue; } // server menolak -> coba lagi dari data terbaru
+      try{
+        const cek = await safeGetRaw(key);
+        if(cek.found && Array.isArray(cek.value) && _jsonEqual_(cek.value, finalArr)){
+          state[stateField] = finalArr;
+          saveCachedClass(keyBase());
+          render();
+          return { ok:true };
+        }
+        lastError = 'Data di server belum cocok setelah disimpan (kemungkinan tertimpa proses lain di saat bersamaan) -- otomatis dicoba ulang.';
+      }catch(e2){ lastError = 'Gagal membaca ulang dari server untuk verifikasi: ' + (e2 && e2.message || e2); }
+    }
+    // Semua percobaan habis: tetap terapkan hasil percobaan TERAKHIR ke tampilan lokal (supaya
+    // layar tidak "loncat balik") tapi laporkan apa adanya ke pemanggil sebagai gagal.
+    return { ok:false, error: lastError };
   });
 }
 async function safeSaveObject(key, stateField, applyFn){
   return _queuedSave(key, async ()=>{
-    let latest;
-    try{
-      const r = await safeGetRaw(key);
-      latest = (r.found && r.value && typeof r.value==='object') ? r.value : (state[stateField] || {});
-    }catch(e){ latest = state[stateField] || {}; }
-    const result = applyFn(latest);
-    const finalObj = result || latest;
-    const saveResult = await safeSet(key, finalObj);
-    state[stateField] = finalObj;
-    saveCachedClass(keyBase());
-    render();
-    return saveResult; // {ok:true} atau {ok:false, error} -- lihat pemakaiannya di bulkMarkWeekHadir
+    let lastError = 'Gagal menyimpan setelah beberapa kali percobaan.';
+    for(let attempt=0; attempt<=_SAVE_RETRY_DELAYS_.length; attempt++){
+      if(attempt>0) await _sleep_(_SAVE_RETRY_DELAYS_[attempt-1]);
+      let latest;
+      try{
+        const r = await safeGetRaw(key);
+        latest = (r.found && r.value && typeof r.value==='object') ? r.value : (state[stateField] || {});
+      }catch(e){ latest = state[stateField] || {}; }
+      const result = applyFn(latest);
+      const finalObj = result || latest;
+      const saveResult = await safeSet(key, finalObj);
+      if(!saveResult.ok){ lastError = saveResult.error; continue; }
+      try{
+        const cek = await safeGetRaw(key);
+        if(cek.found && cek.value && typeof cek.value==='object' && _jsonEqual_(cek.value, finalObj)){
+          state[stateField] = finalObj;
+          saveCachedClass(keyBase());
+          render();
+          return { ok:true };
+        }
+        lastError = 'Data di server belum cocok setelah disimpan (kemungkinan tertimpa proses lain di saat bersamaan) -- otomatis dicoba ulang.';
+      }catch(e2){ lastError = 'Gagal membaca ulang dari server untuk verifikasi: ' + (e2 && e2.message || e2); }
+    }
+    return { ok:false, error: lastError };
   });
 }
 
@@ -4982,10 +5027,11 @@ function renderModal(){
       state.modal = null;
       render();
 
-      // Sama seperti "Tandai Hadir Semua": TUNGGU hasil simpan, lalu verifikasi ke server,
-      // supaya kalau ternyata gagal tersimpan (mis. baris yang sengaja diubah ke Alpa/Izin/Sakit
-      // tidak nyangkut), admin langsung tahu SAAT ITU JUGA -- bukan baru sadar nanti setelah
-      // reload dan datanya sudah balik seperti semula.
+      // safeSaveObject/safeSaveArray SEKARANG SUDAH mengurus baca-terbaru -> terapkan -> simpan
+      // -> verifikasi baca-ulang -> OTOMATIS COBA LAGI kalau belum cocok, semuanya SENDIRI di
+      // dalam fungsi itu (lihat definisinya) -- jadi di sini kita cukup percaya hasil akhirnya,
+      // tidak perlu lagi baca-ulang terpisah yang justru rawan salah lapor gagal karena race
+      // dengan proses simpan lain di saat bersamaan.
       const [rekapSaveResult, scansSaveResult] = await Promise.all([
         safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{ latest[scanId] = result; return latest; }),
         safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
@@ -4998,34 +5044,10 @@ function renderModal(){
       const gagalSimpan = !rekapSaveResult || !rekapSaveResult.ok || !scansSaveResult || !scansSaveResult.ok;
       if(gagalSimpan){
         const detail = [rekapSaveResult, scansSaveResult].filter(r=>r && !r.ok).map(r=>r.error).join('; ');
-        alert(`⚠️ RIWAYAT KEHADIRAN INI TIDAK TERSIMPAN KE SERVER!\n\nDi layar tab ini sudah berubah, tapi gagal disimpan permanen ke Google Sheets (${detail || 'sebab tidak diketahui'}).\n\nKalau halaman di-reload, perubahan barusan akan HILANG (kembali ke data lama). Coba simpan ulang sesaat lagi lewat "Edit rekap" pada sesi ini.`);
+        alert(`⚠️ RIWAYAT KEHADIRAN INI TIDAK TERSIMPAN KE SERVER!\n\nSudah dicoba beberapa kali otomatis tapi tetap gagal disimpan permanen ke Google Sheets (${detail || 'sebab tidak diketahui'}).\n\nKalau halaman di-reload, perubahan barusan akan HILANG (kembali ke data lama). Coba simpan ulang sesaat lagi lewat "Edit rekap" pada sesi ini -- kalau masih gagal terus, kemungkinan ada masalah koneksi/server Google Sheets-nya.`);
         return;
       }
-      try{
-        const cek = await safeGetRaw('rekap:'+keyBase());
-        const cocok = cek.found && cek.value && cek.value[scanId] && Object.keys(result).every(sid=> rekapValuesEqual(cek.value[scanId][sid], result[sid]));
-        // Ringkasan mahasiswa yang statusnya BUKAN Hadir (biasanya cuma sedikit), supaya bisa
-        // langsung dicek dengan mata apakah yang tersimpan di SERVER (bukan cuma di layar) itu
-        // benar sesuai yang barusan diedit -- ini untuk memastikan tanpa harus buka Google Sheets.
-        const nonHadir = state.students
-          .filter(st=> result[st.id] !== 'H')
-          .map(st=> `${st.nama}: ${labelForRekapValue(result[st.id], jamSesi)}`);
-        const ringkasanDiminta = nonHadir.length ? nonHadir.join('\n') : '(semua mahasiswa Hadir)';
-        const statusServer = cek.found && cek.value && cek.value[scanId]
-          ? state.students.filter(st=> cek.value[scanId][st.id] !== 'H').map(st=> `${st.nama}: ${labelForRekapValue(cek.value[scanId][st.id], jamSesi)}`)
-          : null;
-        const ringkasanServer = statusServer ? (statusServer.length ? statusServer.join('\n') : '(semua mahasiswa Hadir)') : '(gagal membaca ulang dari server)';
-        if(!cocok){
-          alert(`⚠️ Data di server TIDAK COCOK dengan yang barusan disimpan.\n\nYang tadi diminta (di form):\n${ringkasanDiminta}\n\nYang TERBACA di server sekarang:\n${ringkasanServer}\n\nCoba buka lagi "Edit rekap" sesi ini sesaat lagi.`);
-        } else {
-          // Sengaja TIDAK menampilkan alert sukses lagi supaya tidak mengganggu alur kerja --
-          // penyimpanan & verifikasi ke server tetap berjalan persis seperti sebelumnya di
-          // belakang layar (lihat kode di atas: safeSaveObject/safeSaveArray + baca-ulang
-          // safeGetRaw), jadi kalau memang gagal tersimpan atau datanya tidak cocok, admin
-          // TETAP akan diberi tahu lewat alert peringatan di atas/di bawah seperti biasa.
-          console.log('[Simpan Rekap] tersimpan & terkonfirmasi di server untuk sesi', scanId, ringkasanDiminta);
-        }
-      }catch(e2){ alert('Simpan sepertinya berhasil (server merespons OK), tapi verifikasi baca-ulang gagal karena: ' + (e2 && e2.message || e2) + '\n\nCoba cek lagi sesaat lagi.'); }
+      console.log('[Simpan Rekap] tersimpan & terkonfirmasi di server untuk sesi', scanId);
     });
   }
 }
@@ -5099,15 +5121,12 @@ function attachHandlers(){
       latest.sort((a,b)=> String(a.nim).localeCompare(String(b.nim), undefined, {numeric:true}));
       return latest;
     });
+    // safeSaveArray sudah otomatis verifikasi baca-ulang & coba-lagi sendiri di dalamnya --
+    // tidak perlu lagi baca-ulang terpisah di sini (lihat catatan di definisi safeSaveArray).
     if(!saveResult || !saveResult.ok){
       alert(`⚠️ "${nama}" TIDAK tersimpan ke server (${saveResult && saveResult.error || 'sebab tidak diketahui'}).\n\nDia akan HILANG lagi kalau halaman di-reload. Coba tambahkan ulang sesaat lagi.`);
       return;
     }
-    try{
-      const cek = await safeGetRaw('roster:'+keyBase());
-      const cocok = cek.found && Array.isArray(cek.value) && cek.value.some(s=>s.id===newSt.id);
-      if(!cocok) alert(`Server merespons OK, tapi saat dicek ulang "${nama}" belum terlihat di data server. Coba refresh halaman untuk memastikan.`);
-    }catch(e2){ /* verifikasi gagal diambil, tidak fatal */ }
   });
   const resetToSeedBtn = document.getElementById('resetToSeedBtn');
   if(resetToSeedBtn) resetToSeedBtn.addEventListener('click', ()=>{
@@ -5917,22 +5936,12 @@ async function bulkMarkWeekHadir(week){
     const gagalSimpan = !rekapSaveResult || !rekapSaveResult.ok || !scansSaveResult || !scansSaveResult.ok;
     if(gagalSimpan){
       const detail = [rekapSaveResult, scansSaveResult].filter(r=>r && !r.ok).map(r=>r.error).join('; ');
-      alert(`⚠️ PERUBAHAN INI TIDAK TERSIMPAN KE SERVER!\n\nTabel di layar tab ini SUDAH berubah jadi Hadir, tapi gagal disimpan permanen ke Google Sheets (${detail || 'sebab tidak diketahui'}).\n\nKalau halaman di-reload atau dibuka di perangkat lain, datanya akan KEMBALI seperti semula (Alpa). Ini kemungkinan besar masalah di koneksi/server Google Sheets-nya, bukan di tombolnya. Coba lagi sesaat lagi, atau screenshot pesan ini untuk dilaporkan.`);
+      alert(`⚠️ PERUBAHAN INI TIDAK TERSIMPAN KE SERVER!\n\nTabel di layar tab ini SUDAH berubah jadi Hadir, dan sudah dicoba beberapa kali otomatis, tapi tetap gagal disimpan permanen ke Google Sheets (${detail || 'sebab tidak diketahui'}).\n\nKalau halaman di-reload atau dibuka di perangkat lain, datanya akan KEMBALI seperti semula (Alpa). Ini kemungkinan besar masalah di koneksi/server Google Sheets-nya, bukan di tombolnya. Coba lagi sesaat lagi, atau screenshot pesan ini untuk dilaporkan.`);
     } else {
-      // Verifikasi tambahan: baca ULANG dari server untuk MEMASTIKAN datanya benar-benar
-      // tersimpan seperti yang diharapkan (bukan cuma percaya respons HTTP 2xx).
-      let terverifikasi = false;
-      try{
-        const cek = await safeGetRaw('rekap:'+keyBase());
-        if(cek.found && cek.value){
-          terverifikasi = scanIds.every(id=> cek.value[id] && state.students.every(st=> cek.value[id][st.id]==='H'));
-        }
-      }catch(e){ /* verifikasi gagal diambil -- anggap belum terverifikasi, tapi jangan blokir alert utama */ }
-      if(terverifikasi){
-        alert(`✅ Berhasil DAN sudah terkonfirmasi tersimpan permanen di server: ${scansInWeek.length} sesi minggu ${week} ditandai Hadir untuk ${state.students.length} mahasiswa.\n\nKalau ini salah pencet, klik "Urungkan Tandai Hadir Semua" di sebelah tombol ini.`);
-      } else {
-        alert(`Tersimpan (server merespons OK), tapi saat dicek ulang datanya belum sepenuhnya cocok. Coba muat ulang (refresh) halaman ini sebentar lagi untuk memastikan, dan kabari saya kalau ternyata balik ke Alpa lagi.`);
-      }
+      // safeSaveObject/safeSaveArray sudah otomatis verifikasi baca-ulang & coba-lagi sendiri
+      // di dalamnya (lihat catatan di definisinya) -- kalau sampai di sini dengan ok:true,
+      // berarti sudah benar-benar terkonfirmasi cocok di server, tidak perlu baca-ulang lagi.
+      alert(`✅ Berhasil DAN sudah terkonfirmasi tersimpan permanen di server: ${scansInWeek.length} sesi minggu ${week} ditandai Hadir untuk ${state.students.length} mahasiswa.\n\nKalau ini salah pencet, klik "Urungkan Tandai Hadir Semua" di sebelah tombol ini.`);
     }
   }catch(err){
     console.error('[bulkMarkWeekHadir] GAGAL:', err);

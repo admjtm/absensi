@@ -425,6 +425,25 @@
      dari modal biasa, supaya foto lembar absensi kelihatan besar & jelas begitu dibuka --
      tidak perlu langsung pencet tombol zoom dulu. */
   .modal.modal-wide{ max-width:1100px; }
+
+  /* ---- Modal "Isi Rekap" mode SPLIT (layar lebar): foto scan di kiri, form rekap di kanan.
+     Masing-masing panel punya scroll sendiri, jadi foto tetap terlihat sambil isi rekap --
+     tidak perlu scroll atas-bawah lagi. Di layar sempit (<900px / HP) tetap tersusun atas-bawah. */
+  @media (min-width:900px){
+    .modal.modal-split{ max-width:1600px; width:97vw; height:94vh; max-height:94vh; display:flex; flex-direction:column; overflow:hidden; }
+    .modal.modal-split .modal-body{ flex:1; min-height:0; overflow:hidden; padding:14px 16px; }
+    .rekap-split{ display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); gap:16px; height:100%; }
+    .rekap-pane{ min-height:0; overflow:auto; }
+    .rekap-pane-img{ display:flex; flex-direction:column; overflow:hidden; }
+    .rekap-pane-img > div{ display:flex; flex-direction:column; flex:1; min-height:0; }
+    .rekap-pane-img .img-zoom-viewport{ max-height:none; flex:1; min-height:0; }
+    .rekap-pane-form{ padding-right:4px; }
+    .rekap-pane-form .excel-table-scroll{ overflow:visible; border:none; }
+    .rekap-pane-form table thead th{ position:sticky; top:0; z-index:2; background:#F4F6F8; box-shadow:0 1px 0 var(--line-strong); }
+    .rekap-pane-form th[style*="190px"]{ width:170px !important; }
+    .rekap-pane-form th[style*="150px"]{ width:130px !important; }
+    .rekap-pane-form .rekap-actions{ position:sticky; bottom:0; background:#fff; padding:10px 0 2px; margin-top:8px !important; border-top:1px solid var(--line); z-index:3; }
+  }
   .modal-head{display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line); position:sticky; top:0; background:#fff;}
   .modal-head h3{margin:0; font-size:15px;}
   .modal-close{border:none; background:var(--paper); width:28px; height:28px; border-radius:50%; font-size:15px; color:var(--ink-soft);}
@@ -4800,13 +4819,15 @@ function renderModal(){
 
     root.innerHTML = `
       <div class="modal-overlay" data-close-modal="1">
-        <div class="modal modal-wide" onclick="event.stopPropagation()">
+        <div class="modal modal-wide ${sc.dataUrl ? 'modal-split' : ''}" onclick="event.stopPropagation()">
           <div class="modal-head">
             <h3>Isi Rekap &mdash; ${escapeHtml(sc.matkulNama)} &middot; ${formatDate(sc.tanggal)}</h3>
             <button class="modal-close" data-close-modal="1">&times;</button>
           </div>
           <div class="modal-body">
-            ${sc.dataUrl ? `<div id="imgZoomWrap_rekap_${sc.id}">${renderZoomableImage(sc.dataUrl, 'Scan absensi', 'rekap_'+sc.id)}</div>` : `<div class="note" style="margin-bottom:14px;">&#9997; Sesi ini diisi <strong>manual</strong> oleh admin tanpa dokumen scan (keadaan mendesak) -- tidak ada foto untuk ditampilkan.</div>`}
+           <div class="${sc.dataUrl ? 'rekap-split' : ''}">
+            ${sc.dataUrl ? `<div class="rekap-pane rekap-pane-img"><div id="imgZoomWrap_rekap_${sc.id}">${renderZoomableImage(sc.dataUrl, 'Scan absensi', 'rekap_'+sc.id)}</div></div>` : `<div class="note" style="margin-bottom:14px;">&#9997; Sesi ini diisi <strong>manual</strong> oleh admin tanpa dokumen scan (keadaan mendesak) -- tidak ada foto untuk ditampilkan.</div>`}
+            <div class="rekap-pane rekap-pane-form">
             ${state.students.length ? `
             <form id="rekapForm" data-jam-sesi="${jamSesi}">
               <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; padding:10px 12px; background:var(--paper); border:1px solid var(--line); border-radius:8px;">
@@ -4824,11 +4845,13 @@ function renderModal(){
                   <tbody>${rows}</tbody>
                 </table>
               </div>
-              <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+              <div class="rekap-actions" style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
                 <button type="button" class="btn btn-ghost" data-close-modal="1">Batal</button>
                 <button type="submit" class="btn btn-primary">Simpan Rekap</button>
               </div>
             </form>` : `<div class="empty-state"><p>Belum ada data mahasiswa di kelas ini.</p></div>`}
+            </div>
+           </div>
           </div>
         </div>
       </div>`;

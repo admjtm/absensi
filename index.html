@@ -514,6 +514,22 @@
     .img-zoom-viewport{ max-height:48vh; }
     .status-group{ gap:3px; }
     .status-opt span{ min-width:36px; padding:6px 5px; font-size:10.5px; }
+
+    /* Tabel di modal "Isi Rekap" dibuat lebih rapat KHUSUS di HP -- supaya kolom Nama
+       sampai tombol status H/I/S/A muat semua di lebar layar tanpa perlu digeser
+       kiri-kanan lagi. Kolom No dan NIM dipersempit, tombol status dibuat lebih kecil
+       (tetap cukup besar untuk disentuh jari), dan padding sel dikurangi. */
+    .rekap-pane-form table{ font-size:11px; }
+    .rekap-pane-form th, .rekap-pane-form td{ padding:5px 3px; }
+    .rekap-pane-form td.nim{ font-size:9.5px; }
+    .rekap-pane-form .status-group{ gap:2px; }
+    .rekap-pane-form .status-opt span{ min-width:24px; padding:4px 1px; font-size:9px; border-radius:5px; }
+    .rekap-pane-form th[style*="34px"]{ width:18px !important; }
+    .rekap-pane-form th[style*="190px"]{ width:112px !important; }
+    .rekap-pane-form th[style*="150px"]{ width:80px !important; }
+    .rekap-pane-form .jam-manual-input{ width:34px !important; padding:3px 2px !important; font-size:10px !important; }
+    .rekap-pane-form td > div[style*="align-items:center"]{ gap:2px !important; }
+    .rekap-pane-form td span[style*="white-space:nowrap"]{ font-size:9px !important; }
   }
 </style>
 </head>

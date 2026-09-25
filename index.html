@@ -2810,7 +2810,7 @@ async function loadClass(){
     // Gagal mengambil data dari server -- biarkan daftar mahasiswa yang sudah tampil apa adanya.
   } else if(SEED_STUDENTS[base]){
     // first time this class is opened: pre-fill with the official roster provided
-    state.students = SEED_STUDENTS[base].map(s=>({id:uid(), nama:s.nama, nim:s.nim}));
+    state.students = SEED_STUDENTS[base].map(s=>({id:studentIdFromNim_(s.nim), nama:s.nama, nim:s.nim}));
     await saveStudents();
   } else {
     state.students = [];
@@ -2913,7 +2913,21 @@ async function loadClass(){
       adaDuplikat = true;
       // Urutkan: yang sudah direkap dulu, lalu yang paling baru diupload -- supaya acuan
       // (canonical) yang dipilih adalah yang paling bisa dipercaya datanya.
+      // PERBAIKAN BUG "TIDAK SINKRON YANG TIDAK BISA HILANG WALAU SUDAH DIISI ULANG":
+      // sebelumnya kriteria "acuan" (canonical) HANYA melihat sudah-direkap-atau-belum, TANPA
+      // peduli apakah rekap itu SENDIRI nyambung ke daftar mahasiswa sekarang. Akibatnya kalau
+      // ada scan LAMA yang sudah "direkap" tapi datanya sudah terlanjur putus/tidak sinkron
+      // (mis. karena roster sempat diimpor ulang), dan admin lalu upload scan BARU + isi rekap
+      // baru dengan benar untuk matkul+tanggal yang SAMA, entri LAMA yang rusak itu TETAP
+      // menang jadi acuan (karena "sudah direkap"=true lebih diutamakan) -- rekap baru yang
+      // benar malah ikut dianggap "duplikat" dan disingkirkan. Inilah sebab isi ulang rekap
+      // berkali-kali tetap kembali "Tidak Sinkron" untuk sesi yang sama.
+      // Sekarang entri yang rekapnya SUDAH NYAMBUNG ke roster sekarang diutamakan MENANG lebih
+      // dulu di atas entri yang "sudah direkap" tapi ternyata tidak nyambung.
       const sorted = [...list].sort((a,b)=>{
+        const aSync = !!a.direkap && _rekapObjSinkron_(state.rekap[a.id]);
+        const bSync = !!b.direkap && _rekapObjSinkron_(state.rekap[b.id]);
+        if(aSync !== bSync) return (bSync?1:0) - (aSync?1:0);
         if(!!b.direkap !== !!a.direkap) return (b.direkap?1:0) - (a.direkap?1:0);
         return new Date(b.uploadedAt||0) - new Date(a.uploadedAt||0);
       });
@@ -3204,6 +3218,23 @@ async function safeSaveObject(key, stateField, applyFn){
 }
 
 function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
+// PERBAIKAN BUG "SUDAH DIREKAP, TIDAK SINKRON": sebelumnya SETIAP kali daftar mahasiswa
+// dibuat ulang dari data bawaan (pertama kali kelas dibuka, "Reset ke Data Resmi", atau
+// fallback di Rekap SP saat roster belum pernah ada), tiap mahasiswa diberi id ACAK BARU
+// (uid()) walau NIM-nya sama persis dengan sebelumnya. Akibatnya rekap kehadiran LAMA (yang
+// disimpan berdasarkan id mahasiswa saat itu) jadi "nyasar" -- tidak nyambung lagi ke id
+// mahasiswa yang baru -- dan dianggap Alpa penuh walau sudah pernah direkap.
+// Sekarang id mahasiswa yang dibuat dari data bawaan (SEED_STUDENTS) DITURUNKAN dari NIM-nya
+// (bukan acak), sehingga kalau kelas yang SAMA di-reset/dibuka ulang lagi nanti, mahasiswa
+// dengan NIM yang sama akan selalu mendapat id yang SAMA PERSIS seperti sebelumnya -- rekap
+// lama tetap nyambung. (Catatan: ini mencegah masalah ini terulang KE DEPAN; sesi yang SUDAH
+// terlanjur "Tidak Sinkron" dari kejadian sebelum perbaikan ini tetap perlu diisi ulang manual
+// sekali lewat "Edit rekap", karena id lama yang sudah disimpan di rekap tidak bisa ditelusuri
+// balik lagi ke mahasiswa mana setelah tertimpa id acak yang baru.)
+function studentIdFromNim_(nim){
+  const cleaned = String(nim||'').trim().replace(/[^a-zA-Z0-9_-]/g,'');
+  return cleaned ? ('stu_'+cleaned) : uid();
+}
 
 /* ---------------- Notifikasi Admin real-time (upload Ketua Kelas) ---------------- */
 // Hanya aktif untuk role Admin. Mengecek berkala (polling) ke Apps Script apakah ada
@@ -4118,7 +4149,7 @@ async function loadRekapSPData(prodiKey){
     matkul.forEach(ensureHariHistory);
     let students = rosterRes.value;
     if(!students){
-      students = SEED_STUDENTS[base] ? SEED_STUDENTS[base].map(s=>({id:uid(), nama:s.nama, nim:s.nim})) : [];
+      students = SEED_STUDENTS[base] ? SEED_STUDENTS[base].map(s=>({id:studentIdFromNim_(s.nim), nama:s.nama, nim:s.nim})) : [];
     }
     students = [...students].sort((a,b)=> String(a.nim).localeCompare(String(b.nim), undefined, {numeric:true}));
     return {
@@ -5111,7 +5142,11 @@ function attachHandlers(){
     const fd = new FormData(addStudentForm);
     const nama = fd.get('nama').trim(), nim = fd.get('nim').trim();
     if(!nama||!nim) return;
-    const newSt = {id:uid(), nama, nim};
+    if(state.students.some(st=> String(st.nim)===String(nim))){
+      alert(`NIM ${nim} sudah ada di daftar mahasiswa kelas ini -- tidak ditambahkan lagi (untuk menghindari data ganda/rekap lama jadi tidak nyambung). Kalau memang mau ubah nama, hapus dulu baris lama baru tambah ulang.`);
+      return;
+    }
+    const newSt = {id:studentIdFromNim_(nim), nama, nim};
     state.students.push(newSt);
     state.rosterDirtyAt = Date.now(); // tandai: ada edit lokal, lihat penjelasan di loadClass()
     render();
@@ -5135,7 +5170,7 @@ function attachHandlers(){
     if(!seed) return;
     const ok = confirm('Ganti SELURUH daftar mahasiswa kelas '+state.kelas+' saat ini dengan data resmi ('+seed.length+' mahasiswa)? Data mahasiswa yang ada sekarang di kelas ini akan hilang dan tidak bisa dikembalikan.');
     if(!ok) return;
-    state.students = seed.map(s=>({id:uid(), nama:s.nama, nim:s.nim}));
+    state.students = seed.map(s=>({id:studentIdFromNim_(s.nim), nama:s.nama, nim:s.nim}));
     state.rosterDirtyAt = Date.now();
     render();
     saveStudents();
@@ -5150,7 +5185,7 @@ function attachHandlers(){
     e.preventDefault();
     const raw = new FormData(importStudentForm).get('bulk') || '';
     const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
-    let added = 0;
+    let added = 0, dilewati = 0;
     const newOnes = [];
     lines.forEach(line=>{
       const parts = line.split(/\t|,|;/).map(p=>p.trim()).filter(Boolean);
@@ -5158,12 +5193,26 @@ function attachHandlers(){
       const nim = parts.find(p=>/^\d{6,}$/.test(p));
       const nama = parts.filter(p=>p!==nim).join(' ');
       if(!nim || !nama) return;
-      const newSt = {id:uid(), nama, nim};
+      // PERBAIKAN BUG "TIDAK SINKRON": kalau mahasiswa dengan NIM ini SUDAH ADA di kelas ini
+      // (mis. admin re-paste/impor ulang daftar yang sama untuk membetulkan urutan/typo),
+      // JANGAN buat baris baru dengan id acak baru -- itu akan membuat baris DUPLIKAT sekaligus
+      // memutuskan sambungan rekap kehadiran lama milik mahasiswa itu (karena rekap tersimpan
+      // berdasarkan id, bukan NIM). Cukup lewati (atau perbarui namanya kalau berubah), dan id
+      // mahasiswa yang genuinely baru diturunkan dari NIM-nya (bukan acak) supaya kalau nanti
+      // di-impor ulang lagi, tetap nyambung ke rekap yang sama.
+      const existing = state.students.find(st=> String(st.nim)===String(nim));
+      if(existing){
+        if(existing.nama !== nama) existing.nama = nama; // perbarui nama kalau ada perbaikan ejaan
+        dilewati++;
+        return;
+      }
+      const newSt = {id:studentIdFromNim_(nim), nama, nim};
       state.students.push(newSt);
       newOnes.push(newSt);
       added++;
     });
-    if(!added) alert('Tidak ada baris valid ditemukan. Pastikan format: Nama, NIM');
+    if(!added && !dilewati) alert('Tidak ada baris valid ditemukan. Pastikan format: Nama, NIM');
+    else if(dilewati) console.log('[Impor Mahasiswa] dilewati (NIM sudah ada, bukan mahasiswa baru):', dilewati);
     state.rosterDirtyAt = Date.now();
     render();
     if(added) safeSaveArray('roster:'+keyBase(), 'students', latest=>{
@@ -5735,7 +5784,12 @@ function findScanForSession_(mk, dateStr){
 function rekapNyambungKeRoster(sc){
   if(!sc || !sc.direkap) return null;
   if(!state.students.length) return null; // tidak ada mahasiswa untuk dibandingkan -> jangan asal vonis
-  const r = state.rekap[sc.id];
+  return _rekapObjSinkron_(state.rekap[sc.id]);
+}
+// Dipakai bersama oleh rekapNyambungKeRoster() di atas DAN oleh logika gabung-scan-duplikat
+// otomatis saat kelas dibuka (lihat loadClass) -- supaya kriteria "rekap ini nyambung ke
+// daftar mahasiswa sekarang atau tidak" konsisten di kedua tempat, bukan 2 aturan berbeda.
+function _rekapObjSinkron_(r){
   if(!r || !Object.keys(r).length) return false;
   return state.students.some(st=> Object.prototype.hasOwnProperty.call(r, st.id));
 }

@@ -3004,13 +3004,19 @@ async function batchGetClassData_(base){
         }
         return { found:false, value:null, error:false };
       };
-      return keys.map(parse);
+      const parsed = keys.map(parse);
+      const rk = parsed[3]; // 'rekap:'+base
+      if(rk.found && rk.value && rk.value.__rekapShards){
+        const rr = await _resolveRekapShards_(keys[3], rk.value);
+        parsed[3] = rr.ok ? { found:true, value:rr.value, error:false } : { found:false, value:null, error:true };
+      }
+      return parsed;
     }
   }catch(e){ console.error('Batch load gagal, jatuh ke cara lama:', e); }
   // Fallback: backend belum mendukung ?keys= (Code.gs belum di-update) atau request batch gagal.
   return Promise.all(keys.map(k=> safeGetRaw(k)));
 }
-async function safeGetRaw(key){
+async function _safeGetRawPlain_(key){
   try{
     // cache:'no-store' -- lihat catatan di batchGetClassData_ di atas: tanpa ini, hasil GET
     // untuk key yang sama bisa disajikan dari cache browser yang sudah basi.
@@ -3024,6 +3030,47 @@ async function safeGetRaw(key){
     // pernah ada. Pemanggil wajib membedakan ini -- lihat catatan di loadClass().
     return { found:false, value:null, error:true };
   }
+}
+// ===== REKAP DIPECAH JADI BEBERAPA "SHARD" (anti batas 50.000 karakter per sel Google Sheets) =====
+// AKAR MASALAH "SUDAH DIREKAP, TIDAK SINKRON YANG TIDAK BISA HILANG": seluruh rekap 1 kelas
+// (semua sesi x semua mahasiswa) disimpan sebagai SATU teks JSON di SATU sel. Begitu jumlah
+// sesi yang direkap bertambah (+/- 60 sesi untuk kelas 35 mahasiswa) teks itu melewati batas
+// 50.000 karakter per sel, sehingga simpan rekap BARU ditolak/terpotong di server, sedangkan
+// daftar scan (yang kecil) tetap berhasil disimpan dengan direkap:true. Hasilnya: sesi-sesi
+// TERBARU berlabel "Sudah direkap" tapi isi rekapnya tidak pernah ada di server -> "tidak
+// sinkron", dan "Edit rekap" gagal terus karena masalah ukuran yang sama.
+// Sekarang kalau JSON rekap > REKAP_SHARD_MAX_CHARS_, ia dipecah ke beberapa key
+// ("rekap:<kelas>~0", "~1", ...) dan key utama hanya berisi penanda {__rekapShards:N}.
+// Semua pembacaan/penulisan lewat safeGetRaw/safeSet/batchGetClassData_, jadi bagian kode lain
+// tidak perlu tahu soal ini.
+const REKAP_SHARD_MAX_CHARS_ = 30000;
+function _isRekapKey_(key){ return typeof key==='string' && key.indexOf('rekap:')===0; }
+function _rekapShardKey_(key, i){ return key+'~'+i; }
+function _splitRekapToShards_(obj){
+  const shards = []; let cur = {}; let curLen = 2; let curCount = 0;
+  Object.keys(obj).forEach(id=>{
+    const piece = JSON.stringify(id)+':'+JSON.stringify(obj[id])+',';
+    if(curCount>0 && curLen+piece.length>REKAP_SHARD_MAX_CHARS_){ shards.push(cur); cur = {}; curLen = 2; curCount = 0; }
+    cur[id] = obj[id]; curLen += piece.length; curCount++;
+  });
+  shards.push(cur);
+  return shards;
+}
+// Kalau 'value' adalah penanda shard, ambil semua shard & gabungkan. Return {ok, value}.
+async function _resolveRekapShards_(key, value){
+  if(!value || typeof value!=='object' || !value.__rekapShards) return { ok:true, value };
+  const n = Number(value.__rekapShards)||0;
+  const parts = await Promise.all(Array.from({length:n}, (_,i)=> _safeGetRawPlain_(_rekapShardKey_(key,i))));
+  if(parts.some(p=> !p.found || !p.value || typeof p.value!=='object')) return { ok:false, value:null };
+  return { ok:true, value: Object.assign({}, ...parts.map(p=>p.value)) };
+}
+async function safeGetRaw(key){
+  const r = await _safeGetRawPlain_(key);
+  if(r.found && _isRekapKey_(key) && r.value && r.value.__rekapShards){
+    const rr = await _resolveRekapShards_(key, r.value);
+    return rr.ok ? { found:true, value:rr.value, error:false } : { found:false, value:null, error:true };
+  }
+  return r;
 }
 async function saveStudents(){
   // Urutkan berdasarkan NIM dari yang terkecil setiap kali data mahasiswa disimpan
@@ -3075,6 +3122,22 @@ async function logScanToSheet(payload){
   }
 }
 async function safeSet(key, value){
+  if(_isRekapKey_(key) && value && typeof value==='object' && !value.__rekapShards){
+    let json = ''; try{ json = JSON.stringify(value); }catch(e){}
+    if(json.length > REKAP_SHARD_MAX_CHARS_){
+      const shards = _splitRekapToShards_(value);
+      // tulis semua shard DULU, baru penanda di key utama -- supaya kalau gagal di tengah,
+      // key utama tidak pernah menunjuk ke shard yang belum ada.
+      for(let i=0;i<shards.length;i++){
+        const r = await _safeSetRaw_(_rekapShardKey_(key,i), shards[i]);
+        if(!r.ok) return r;
+      }
+      return await _safeSetRaw_(key, { __rekapShards: shards.length });
+    }
+  }
+  return _safeSetRaw_(key, value);
+}
+async function _safeSetRaw_(key, value){
   try{
     // Body dikirim sebagai string biasa (bukan header application/json) supaya browser
     // tidak melakukan CORS preflight (OPTIONS) yang tidak didukung Google Apps Script.
@@ -3092,6 +3155,17 @@ async function safeSet(key, value){
     if(!res.ok){
       console.error('Server menolak penyimpanan (bukan HTTP 2xx):', key, res.status, bodyText);
       return { ok:false, error:'HTTP '+res.status };
+    }
+    // Apps Script sering membalas HTTP 200 walau gagal (mis. "melebihi 50000 karakter per sel") dan
+    // menaruh pesan galat di isi respons -- dulu ini diabaikan sehingga gagal-simpan tidak ketahuan.
+    if(bodyText){
+      try{
+        const j = JSON.parse(bodyText);
+        if(j && typeof j==='object' && (j.ok===false || j.error)){
+          console.error('Server membalas galat saat menyimpan:', key, j);
+          return { ok:false, error:String(j.error || 'Server menolak penyimpanan') };
+        }
+      }catch(e3){ /* isi bukan JSON -> abaikan */ }
     }
     return { ok:true };
   }catch(e){
@@ -3938,7 +4012,7 @@ function renderUpload(){
         <span class="stamp ${sc.flagSalah?'stamp-danger':(rekapNyambungKeRoster(sc)===false?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending'))}">${sc.flagSalah?'Berkas tidak sesuai':(rekapNyambungKeRoster(sc)===false?'Sudah Direkap, TIDAK SINKRON':(sc.direkap?'Sudah Direkap':'Sedang Direkap'))}</span>
         ${sc.manual && state.role==='admin' ? `<div class="flag-note">Sesi ini diisi <strong>manual</strong> oleh admin tanpa dokumen scan (keadaan mendesak).</div>` : ''}
         ${sc.flagSalah ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(sc.flagNote||'Berkas yang diunggah tidak sesuai dengan mata kuliah ini.')}</div>` : ''}
-        ${!sc.flagSalah && rekapNyambungKeRoster(sc)===false ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>Rekap sesi ini sudah pernah diisi, tapi datanya tidak nyambung ke daftar mahasiswa yang sekarang (biasanya karena daftar mahasiswa sempat diedit/diimpor ulang). Klik "Edit rekap" dan isi ulang statusnya.</div>` : ''}
+        ${!sc.flagSalah && rekapNyambungKeRoster(sc)===false ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(rekapNoteTidakSinkron_(sc))}</div>` : ''}
         <div class="scan-actions" style="margin-top:8px;">
           ${sc.manual ? '' : `<button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat</button>`}
           ${state.role==='admin' ? `<button class="btn ${rekapNyambungKeRoster(sc)===false?'btn-danger-ghost':'btn-primary'} btn-sm" data-open-rekap="${sc.id}">${sc.direkap?'Edit rekap':'Isi rekap'}</button>` : ''}
@@ -4320,7 +4394,10 @@ function renderRekap(){
   // luar KELIHATAN sudah beres (label "Sudah"), padahal tabel Rekap Mingguan tetap menghitung
   // semua mahasiswa Alpa untuk sesi itu. Dihitung terpisah supaya kasus ini tidak "hilang"
   // ketumpuk di antara sesi yang benar-benar sudah beres.
-  const orphanCount = state.scans.filter(s=> rekapNyambungKeRoster(s)===false).length;
+  const orphanScans = state.scans.filter(s=> rekapNyambungKeRoster(s)===false);
+  const orphanCount = orphanScans.length;
+  const orphanHilang = orphanScans.filter(s=> rekapAlasanTidakSinkron_(s)==='hilang').length;
+  const orphanId = orphanCount - orphanHilang;
 
   const stat = `
   <div class="stat-row">
@@ -4332,6 +4409,7 @@ function renderRekap(){
   </div>
   ${orphanCount ? `<div class="note" style="border-left:3px solid var(--danger); background:#FDEEEC; margin-bottom:16px; padding:12px 14px;">
     <strong>&#9888; ${orphanCount} sesi sudah ditandai "Sudah direkap" tapi datanya tidak nyambung ke daftar mahasiswa sekarang</strong> -- biasanya karena daftar mahasiswa sempat diedit/diimpor ulang setelah sesi itu direkap. Sesi ini tetap dihitung Alpa penuh di tabel di bawah walau labelnya "Sudah". Cari kartu/baris berlabel <strong>"TIDAK SINKRON"</strong> di bawah, lalu klik "Edit rekap" dan isi ulang statusnya.
+    <br><span style="font-size:12px;">Diagnosis: ${orphanHilang} sesi isi rekapnya tidak ada di data (gagal tersimpan), ${orphanId} sesi id mahasiswanya tidak cocok.</span>
   </div>` : ''}`;
 
   const sortedAll = [...state.scans].sort((a,b)=> b.tanggal.localeCompare(a.tanggal));
@@ -4377,7 +4455,7 @@ function renderRekap(){
         <span class="stamp ${sc.flagSalah?'stamp-danger':(rekapNyambungKeRoster(sc)===false?'stamp-danger':(sc.direkap?'stamp-done':'stamp-pending'))}">${sc.flagSalah?'Berkas tidak sesuai':(rekapNyambungKeRoster(sc)===false?'Sudah Direkap, TIDAK SINKRON':(sc.direkap?'Sudah Direkap':'Sedang Direkap'))}</span>
         ${sc.manual && state.role==='admin' ? `<div class="flag-note">Diisi <strong>manual</strong> tanpa dokumen scan (keadaan mendesak).</div>` : ''}
         ${sc.flagSalah ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(sc.flagNote||'Berkas yang diunggah tidak sesuai dengan mata kuliah ini.')}</div>` : ''}
-        ${!sc.flagSalah && rekapNyambungKeRoster(sc)===false ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>Rekap sudah pernah diisi tapi tidak nyambung ke daftar mahasiswa sekarang. Klik "Edit rekap" dan isi ulang.</div>` : ''}
+        ${!sc.flagSalah && rekapNyambungKeRoster(sc)===false ? `<div class="flag-note"><strong>Kenapa masih Alfa?</strong>${escapeHtml(rekapNoteTidakSinkron_(sc))}</div>` : ''}
       </td>
       <td>
         ${sc.manual ? '' : `<button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat scan</button>`}
@@ -5781,6 +5859,17 @@ function findScanForSession_(mk, dateStr){
 //         false = sc.direkap true tapi rekapnya kosong/tidak nyambung ke satupun mahasiswa
 //                 aktif sekarang -> kemungkinan besar "yatim", perlu diisi ulang.
 //         null = tidak relevan (sesi ini memang belum direkap sama sekali).
+// Alasan sebuah sesi dilabeli TIDAK SINKRON: 'hilang' = isi rekap sesi itu tidak ada sama sekali di
+// data (biasanya GAGAL TERSIMPAN ke server), 'id' = ada isinya tapi id mahasiswanya tidak cocok.
+function rekapAlasanTidakSinkron_(sc){
+  const r = state.rekap[sc.id];
+  return (!r || !Object.keys(r).length) ? 'hilang' : 'id';
+}
+function rekapNoteTidakSinkron_(sc){
+  return rekapAlasanTidakSinkron_(sc)==='hilang'
+    ? 'Isi rekap sesi ini TIDAK ditemukan di data server (kemungkinan dulu gagal tersimpan). Klik "Edit rekap", isi ulang, lalu Simpan.'
+    : 'Rekap sesi ini tidak cocok dengan daftar mahasiswa yang sekarang (daftar mahasiswa sempat diedit/diimpor ulang). Klik "Edit rekap" dan isi ulang.';
+}
 function rekapNyambungKeRoster(sc){
   if(!sc || !sc.direkap) return null;
   if(!state.students.length) return null; // tidak ada mahasiswa untuk dibandingkan -> jangan asal vonis

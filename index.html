@@ -2908,6 +2908,7 @@ async function loadClass(){
     let adaDuplikat = false;
     const scansTerpakai = [];
     const rekapGabungan = { ...state.rekap };
+    const rekapChangedIds = new Set();
     groups.forEach(list=>{
       if(list.length<=1){ scansTerpakai.push(list[0]); return; }
       adaDuplikat = true;
@@ -2943,8 +2944,9 @@ async function loadClass(){
       if(Object.keys(rekapTerpakai).length){
         rekapGabungan[canonical.id] = rekapTerpakai;
         canonical.direkap = true;
+        rekapChangedIds.add(canonical.id);
       }
-      sorted.slice(1).forEach(dup=>{ delete rekapGabungan[dup.id]; });
+      sorted.slice(1).forEach(dup=>{ if(rekapGabungan[dup.id]!==undefined) rekapChangedIds.add(dup.id); delete rekapGabungan[dup.id]; });
       scansTerpakai.push(canonical);
     });
     if(adaDuplikat){
@@ -2952,7 +2954,7 @@ async function loadClass(){
       state.rekap = rekapGabungan;
       state.rekapDirtyAt = Date.now();
       await saveScans();
-      await saveRekap();
+      await saveRekap(Array.from(rekapChangedIds));
     }
   }
 
@@ -3010,11 +3012,11 @@ async function batchGetClassData_(base){
         const rr = await _resolveRekapShards_(keys[3], rk.value);
         parsed[3] = rr.ok ? { found:true, value:rr.value, error:false } : { found:false, value:null, error:true };
       }
-      return parsed;
+      return await _enrichClassData_(base, parsed);
     }
   }catch(e){ console.error('Batch load gagal, jatuh ke cara lama:', e); }
   // Fallback: backend belum mendukung ?keys= (Code.gs belum di-update) atau request batch gagal.
-  return Promise.all(keys.map(k=> safeGetRaw(k)));
+  return _enrichClassData_(base, await Promise.all(keys.map(k=> safeGetRaw(k))));
 }
 async function _safeGetRawPlain_(key){
   try{
@@ -3070,8 +3072,226 @@ async function safeGetRaw(key){
     const rr = await _resolveRekapShards_(key, r.value);
     return rr.ok ? { found:true, value:rr.value, error:false } : { found:false, value:null, error:true };
   }
+  if(r.found && _isArrKey_(key) && r.value && r.value.__arrShards){
+    const ra = await _resolveArrShards_(key, r.value);
+    return ra.ok ? { found:true, value:ra.value, error:false } : { found:false, value:null, error:true };
+  }
   return r;
 }
+// ===== PENYIMPANAN REKAP PER-SESI + ANTREAN KIRIM-ULANG (ANTI GAGAL) =====
+// AKAR MASALAH "SUDAH DIREKAP, TIDAK SINKRON / EDIT REKAP GAGAL TERUS": seluruh rekap 1 kelas
+// (puluhan sesi x puluhan mahasiswa) disimpan sebagai SATU data besar yang tiap simpan harus
+// dibaca ulang, diubah, ditulis ulang (bisa beberapa potongan), lalu dibaca ulang lagi untuk
+// verifikasi -- 1 simpan = belasan request ke Google Apps Script. Kalau satu saja request
+// lambat/timeout/tabrakan, seluruh simpan dianggap GAGAL, padahal datanya aman di layar.
+// Sekarang: SETIAP SESI disimpan di key-nya SENDIRI (kecil, ~1-2 KB): 1 simpan = 1 tulis + 1
+// baca-verifikasi. Tidak ada lagi baca-ubah-tulis data besar, tidak ada lagi tabrakan antar
+// sesi, dan tidak ada batas 50.000 karakter. Hasil simpan juga masuk ANTREAN di perangkat
+// (localStorage) yang dikirim ulang OTOMATIS sampai server menerimanya -- jadi rekap tidak akan
+// hilang walau koneksi/server sedang bermasalah, dan tetap tampil benar di layar.
+// Data rekap LAMA (satu blob besar) tetap dibaca sebagai cadangan; data per-sesi yang lebih baru
+// menimpa data lama untuk sesi yang sama.
+const REKAP_SES_PREFIX_ = 'rekapS:';
+function _rekapSesKey_(base,id){ return REKAP_SES_PREFIX_+base+':'+id; }
+const REKAP_OUTBOX_PREFIX_ = 'absensiJtm_rekapOutbox_';
+const _outboxMem_ = Object.create(null);
+function _outboxGet_(base){
+  if(!_outboxMem_[base]){
+    let o = {};
+    try{ const raw = localStorage.getItem(REKAP_OUTBOX_PREFIX_+base); if(raw) o = JSON.parse(raw) || {}; }catch(e){}
+    _outboxMem_[base] = (o && typeof o==='object') ? o : {};
+  }
+  return _outboxMem_[base];
+}
+function _outboxPersist_(base){
+  try{
+    const o = _outboxMem_[base] || {};
+    if(Object.keys(o).length) localStorage.setItem(REKAP_OUTBOX_PREFIX_+base, JSON.stringify(o));
+    else localStorage.removeItem(REKAP_OUTBOX_PREFIX_+base);
+  }catch(e){ /* localStorage penuh/diblokir -> tetap ada di memori selama halaman terbuka */ }
+  _updatePendingBanner_();
+}
+function _pendingBases_(){
+  const bases = {};
+  Object.keys(_outboxMem_).forEach(b=>{ if(Object.keys(_outboxMem_[b]||{}).length) bases[b]=1; });
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(k && k.indexOf(REKAP_OUTBOX_PREFIX_)===0){
+        const b = k.slice(REKAP_OUTBOX_PREFIX_.length);
+        if(!(b in _outboxMem_)){ try{ if(Object.keys(JSON.parse(localStorage.getItem(k))||{}).length) bases[b]=1; }catch(e){} }
+      }
+    }
+  }catch(e){}
+  return Object.keys(bases);
+}
+function _pendingCount_(){ let n=0; _pendingBases_().forEach(b=>{ n += Object.keys(_outboxGet_(b)).length; }); return n; }
+function _updatePendingBanner_(){
+  try{
+    const n = _pendingCount_();
+    let el = document.getElementById('rekapPendingBanner');
+    if(!n){ if(el) el.remove(); return; }
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'rekapPendingBanner';
+      el.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:99999;background:#FEF3C7;border:1px solid #D97706;color:#92400E;padding:8px 12px;border-radius:10px;font:600 12px Inter,system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.15);cursor:pointer;max-width:80vw';
+      el.addEventListener('click', ()=>{ flushAllOutbox_(); });
+      document.body.appendChild(el);
+    }
+    el.textContent = '\u23F3 ' + n + ' rekap menunggu terkirim ke server \u2014 dicoba otomatis (ketuk untuk coba sekarang)';
+  }catch(e){}
+}
+// Simpan 1 sesi ke key-nya sendiri, verifikasi baca-ulang, ulangi sampai 5x dengan jeda.
+async function _saveRekapSession_(base, id){
+  const key = _rekapSesKey_(base, id);
+  return _queuedSave(key, async ()=>{
+    const delays = [0, 700, 1800, 4000, 8000];
+    let lastErr = 'gagal menyimpan';
+    for(let a=0; a<delays.length; a++){
+      if(delays[a]) await _sleep_(delays[a]);
+      const ent = _outboxGet_(base)[id];
+      if(!ent) return { ok:true }; // sudah diselesaikan proses lain
+      const payload = { v:1, ts:ent.ts, deleted:!ent.data, data:ent.data || null };
+      const w = await _safeSetRaw_(key, payload);
+      if(!w.ok){ lastErr = w.error; continue; }
+      const c = await _safeGetRawPlain_(key);
+      if(c.found && c.value && typeof c.value==='object' &&
+         (c.value.ts > ent.ts || (c.value.ts === ent.ts && _stable_(c.value.data) === _stable_(payload.data)))){
+        const box = _outboxGet_(base);
+        if(box[id] && box[id].ts === ent.ts){ delete box[id]; _outboxPersist_(base); }
+        return { ok:true };
+      }
+      lastErr = c.error ? 'gagal membaca ulang untuk verifikasi' : 'data di server belum cocok';
+    }
+    return { ok:false, error:lastErr };
+  });
+}
+async function flushRekapOutbox_(base, onlyIds){
+  const box = _outboxGet_(base);
+  const ids = (onlyIds || Object.keys(box)).filter(id=> box[id]);
+  const errors = []; let idx = 0;
+  const worker = async ()=>{ while(idx < ids.length){ const id = ids[idx++]; const r = await _saveRekapSession_(base, id); if(!r.ok) errors.push(r.error); } };
+  await Promise.all([worker(), worker(), worker()]);
+  _updatePendingBanner_();
+  return errors.length ? { ok:false, error:errors[0], pending:true } : { ok:true };
+}
+let _flushAllBusy_ = false;
+async function flushAllOutbox_(){
+  if(_flushAllBusy_) return;
+  _flushAllBusy_ = true;
+  try{ for(const b of _pendingBases_()) await flushRekapOutbox_(b); }catch(e){ console.error(e); }
+  _flushAllBusy_ = false;
+}
+// Dipakai menggantikan safeSaveObject('rekap:...'): terapkan perubahan, catat sesi mana yang
+// berubah (lewat Proxy), masukkan ke antrean, lalu kirim hanya sesi-sesi itu.
+async function safeSaveRekapSessions_(applyFn){
+  const base = keyBase();
+  const clone = JSON.parse(JSON.stringify(state.rekap || {}));
+  const touched = new Set();
+  const proxy = new Proxy(clone, {
+    set(t,k,v){ t[k]=v; touched.add(k); return true; },
+    deleteProperty(t,k){ delete t[k]; touched.add(k); return true; }
+  });
+  applyFn(proxy);
+  const box = _outboxGet_(base);
+  const now = Date.now(); let n = 0;
+  const newRekap = { ...(state.rekap || {}) };
+  touched.forEach(id=>{
+    if(typeof id!=='string') return;
+    const v = clone[id];
+    if(v===undefined || v===null){ delete newRekap[id]; box[id] = { ts: now+(n++), data:null }; }
+    else { newRekap[id] = v; box[id] = { ts: now+(n++), data:v }; }
+  });
+  state.rekap = newRekap;
+  saveCachedClass(base);
+  _outboxPersist_(base);
+  render();
+  return await flushRekapOutbox_(base, Array.from(touched).filter(id=> typeof id==='string'));
+}
+async function fetchRekapSessions_(base, ids){
+  const out = {}, failed = [];
+  const chunks = []; for(let i=0;i<ids.length;i+=15) chunks.push(ids.slice(i,i+15));
+  await Promise.all(chunks.map(async ch=>{
+    const keys = ch.map(id=> _rekapSesKey_(base,id));
+    try{
+      const res = await fetch(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')), { cache:'no-store' });
+      const r = await res.json();
+      if(!r || !r.values) throw new Error('backend tidak mendukung ?keys=');
+      ch.forEach((id,i)=>{
+        const e = r.values[keys[i]];
+        if(e && e.found && e.value){ try{ out[id] = JSON.parse(e.value); }catch(x){ failed.push(id); } }
+      });
+    }catch(e){
+      // cara lama: satu per satu
+      const singles = await Promise.all(ch.map(id=> _safeGetRawPlain_(_rekapSesKey_(base,id))));
+      singles.forEach((r,i)=>{ if(r.error) failed.push(ch[i]); else if(r.found && r.value) out[ch[i]] = r.value; });
+    }
+  }));
+  return { out, failed };
+}
+// ----- Array besar (scans/roster/matkul/libur) dipecah juga kalau > batas -----
+const ARR_SHARD_MAX_ = 30000;
+function _isArrKey_(key){ return typeof key==='string' && /^(roster|matkul|scans|libur):/.test(key); }
+function _splitArrToShards_(arr){
+  const shards = []; let cur = [], len = 2;
+  arr.forEach(it=>{
+    const l = JSON.stringify(it).length + 1;
+    if(cur.length && len + l > ARR_SHARD_MAX_){ shards.push(cur); cur = []; len = 2; }
+    cur.push(it); len += l;
+  });
+  shards.push(cur);
+  return shards;
+}
+async function _resolveArrShards_(key, value){
+  const n = Number(value.__arrShards) || 0;
+  const parts = await Promise.all(Array.from({length:n}, (_,i)=> _safeGetRawPlain_(key+'~a'+i)));
+  if(parts.some(p=> !p.found || !Array.isArray(p.value))) return { ok:false, value:null };
+  return { ok:true, value:[].concat(...parts.map(p=>p.value)) };
+}
+// Dipanggil oleh batchGetClassData_: lengkapi data kelas dengan shard array + rekap per-sesi +
+// antrean kirim-ulang, dan turunkan status "direkap" dari ada-tidaknya isi rekap.
+async function _enrichClassData_(base, parsed){
+  try{
+    const keys = ['roster:'+base, 'matkul:'+base, 'scans:'+base, 'rekap:'+base, 'semesterStart:'+base, 'libur:'+base];
+    for(const i of [0,1,2,5]){
+      const p = parsed[i];
+      if(p && p.found && p.value && p.value.__arrShards){
+        const rr = await _resolveArrShards_(keys[i], p.value);
+        parsed[i] = rr.ok ? { found:true, value:rr.value, error:false } : { found:false, value:null, error:true };
+      }
+    }
+    const scansP = parsed[2];
+    if(!scansP || scansP.error || !Array.isArray(scansP.value)){
+      // daftar scan tidak berhasil dibaca -> jangan menimpa rekap yang sudah ada di layar
+      if(parsed[3] && !parsed[3].found) parsed[3] = { found:false, value:null, error:true };
+      return parsed;
+    }
+    const scanIds = scansP.value.map(sc=> sc && sc.id).filter(Boolean);
+    const cachedRekap = ((loadCachedClass(base)||{}).rekap) || {};
+    const legacy = parsed[3] || { found:false, value:null, error:false };
+    const { out, failed } = scanIds.length ? await fetchRekapSessions_(base, scanIds) : { out:{}, failed:[] };
+    const merged = legacy.error ? { ...cachedRekap } : { ...(legacy.value || {}) };
+    failed.forEach(id=>{ if(cachedRekap[id]) merged[id] = cachedRekap[id]; });
+    Object.keys(out).forEach(id=>{
+      const pl = out[id];
+      if(pl && pl.deleted) delete merged[id];
+      else if(pl && pl.data) merged[id] = pl.data;
+    });
+    const box = _outboxGet_(base);
+    Object.keys(box).forEach(id=>{ const e = box[id]; if(!e) return; if(e.data) merged[id] = e.data; else delete merged[id]; });
+    parsed[3] = { found:true, value:merged, error:false };
+    scansP.value.forEach(sc=>{
+      if(sc && !sc.direkap && merged[sc.id] && Object.keys(merged[sc.id]).length) sc.direkap = true;
+    });
+    if(Object.keys(box).length) setTimeout(()=>{ flushRekapOutbox_(base); }, 800);
+  }catch(e){ console.error('enrich gagal (data tetap dipakai apa adanya):', e); }
+  return parsed;
+}
+setInterval(()=>{ if(navigator.onLine!==false && _pendingBases_().length) flushAllOutbox_(); }, 15000);
+window.addEventListener('online', ()=>{ flushAllOutbox_(); });
+window.addEventListener('beforeunload', (e)=>{ if(_pendingCount_()>0){ e.preventDefault(); e.returnValue=''; } });
+setTimeout(()=>{ _updatePendingBanner_(); flushAllOutbox_(); }, 1500);
+
 async function saveStudents(){
   // Urutkan berdasarkan NIM dari yang terkecil setiap kali data mahasiswa disimpan
   // (tambah manual, hapus, edit, dsb), supaya urutan selalu konsisten.
@@ -3081,7 +3301,12 @@ async function saveStudents(){
 }
 async function saveMatkul(){ await safeSet('matkul:'+keyBase(), state.matkul); saveCachedClass(keyBase()); }
 async function saveScans(){ await safeSet('scans:'+keyBase(), state.scans); saveCachedClass(keyBase()); }
-async function saveRekap(){ await safeSet('rekap:'+keyBase(), state.rekap); saveCachedClass(keyBase()); }
+async function saveRekap(ids){
+  const base = keyBase(); const box = _outboxGet_(base); const now = Date.now(); let n = 0;
+  (ids || Object.keys(state.rekap||{})).forEach(id=>{ const v = (state.rekap||{})[id]; box[id] = { ts: now+(n++), data: v || null }; });
+  _outboxPersist_(base); saveCachedClass(base);
+  return await flushRekapOutbox_(base, ids);
+}
 async function saveSemesterStart(){ await safeSet('semesterStart:'+keyBase(), state.semesterStart); saveCachedClass(keyBase()); }
 async function saveLibur(){ await safeSet('libur:'+keyBase(), state.libur); saveCachedClass(keyBase()); }
 // Upload gambar (data URL base64 hasil compressImage) ke Google Drive lewat Apps Script,
@@ -3133,6 +3358,17 @@ async function safeSet(key, value){
         if(!r.ok) return r;
       }
       return await _safeSetRaw_(key, { __rekapShards: shards.length });
+    }
+  }
+  if(_isArrKey_(key) && Array.isArray(value)){
+    let jsonA = ''; try{ jsonA = JSON.stringify(value); }catch(e){}
+    if(jsonA.length > ARR_SHARD_MAX_){
+      const sh = _splitArrToShards_(value);
+      for(let i=0;i<sh.length;i++){
+        const r = await _safeSetRaw_(key+'~a'+i, sh[i]);
+        if(!r.ok) return r;
+      }
+      return await _safeSetRaw_(key, { __arrShards: sh.length });
     }
   }
   return _safeSetRaw_(key, value);
@@ -3213,7 +3449,10 @@ function _queuedSave(key, taskFn){
   _saveQueueByKey[key] = run.catch(()=>{}); // simpan sebagai penanda "sedang berjalan", tangkap error di sini saja
   return run;
 }
-function _jsonEqual_(a,b){ try{ return JSON.stringify(a)===JSON.stringify(b); }catch(e){ return false; } }
+function _stable_(v){ if(v===null||typeof v!=='object') return String(JSON.stringify(v)); if(Array.isArray(v)) return '['+v.map(_stable_).join(',')+']'; return '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+_stable_(v[k])).join(',')+'}'; }
+// Perbandingan STABIL (urutan key tidak berpengaruh) -- dulu pakai JSON.stringify biasa sehingga
+// urutan key yang beda tipis dianggap 'tidak cocok' dan simpan dianggap gagal berulang-ulang.
+function _jsonEqual_(a,b){ try{ return _stable_(a)===_stable_(b); }catch(e){ return false; } }
 function _sleep_(ms){ return new Promise(res=> setTimeout(res, ms)); }
 // PERBAIKAN UTAMA (sumber alert "TIDAK COCOK"/"gagal membaca ulang dari server" yang sering
 // muncul): dulu safeSaveObject/safeSaveArray HANYA melakukan SATU KALI baca-terbaru -> terapkan
@@ -3263,6 +3502,7 @@ async function safeSaveArray(key, stateField, applyFn){
   });
 }
 async function safeSaveObject(key, stateField, applyFn){
+  if(_isRekapKey_(key)) return safeSaveRekapSessions_(applyFn); // rekap: per-sesi + antrean (lihat atas)
   return _queuedSave(key, async ()=>{
     let lastError = 'Gagal menyimpan setelah beberapa kali percobaan.';
     for(let attempt=0; attempt<=_SAVE_RETRY_DELAYS_.length; attempt++){
@@ -5150,10 +5390,10 @@ function renderModal(){
         }),
       ]);
 
-      const gagalSimpan = !rekapSaveResult || !rekapSaveResult.ok || !scansSaveResult || !scansSaveResult.ok;
+      if(scansSaveResult && !scansSaveResult.ok) console.warn('[Simpan Rekap] flag direkap di daftar scan belum tersimpan (tidak fatal, status diturunkan dari isi rekap):', scansSaveResult.error);
+      const gagalSimpan = !rekapSaveResult || !rekapSaveResult.ok;
       if(gagalSimpan){
-        const detail = [rekapSaveResult, scansSaveResult].filter(r=>r && !r.ok).map(r=>r.error).join('; ');
-        alert(`⚠️ RIWAYAT KEHADIRAN INI TIDAK TERSIMPAN KE SERVER!\n\nSudah dicoba beberapa kali otomatis tapi tetap gagal disimpan permanen ke Google Sheets (${detail || 'sebab tidak diketahui'}).\n\nKalau halaman di-reload, perubahan barusan akan HILANG (kembali ke data lama). Coba simpan ulang sesaat lagi lewat "Edit rekap" pada sesi ini -- kalau masih gagal terus, kemungkinan ada masalah koneksi/server Google Sheets-nya.`);
+        alert(`⏳ Rekap SUDAH tersimpan aman di perangkat ini dan tampil normal, tapi belum terkirim ke server Google Sheets (${(rekapSaveResult && rekapSaveResult.error) || 'sebab tidak diketahui'}).\n\nAplikasi akan MENGIRIM ULANG OTOMATIS setiap beberapa detik sampai berhasil -- tidak perlu isi ulang. Biarkan halaman tetap terbuka sampai label kuning "menunggu terkirim" di pojok kiri bawah hilang.`);
         return;
       }
       console.log('[Simpan Rekap] tersimpan & terkonfirmasi di server untuk sesi', scanId);
@@ -6076,10 +6316,9 @@ async function bulkMarkWeekHadir(week){
       }),
     ]);
 
-    const gagalSimpan = !rekapSaveResult || !rekapSaveResult.ok || !scansSaveResult || !scansSaveResult.ok;
+    const gagalSimpan = !rekapSaveResult || !rekapSaveResult.ok;
     if(gagalSimpan){
-      const detail = [rekapSaveResult, scansSaveResult].filter(r=>r && !r.ok).map(r=>r.error).join('; ');
-      alert(`⚠️ PERUBAHAN INI TIDAK TERSIMPAN KE SERVER!\n\nTabel di layar tab ini SUDAH berubah jadi Hadir, dan sudah dicoba beberapa kali otomatis, tapi tetap gagal disimpan permanen ke Google Sheets (${detail || 'sebab tidak diketahui'}).\n\nKalau halaman di-reload atau dibuka di perangkat lain, datanya akan KEMBALI seperti semula (Alpa). Ini kemungkinan besar masalah di koneksi/server Google Sheets-nya, bukan di tombolnya. Coba lagi sesaat lagi, atau screenshot pesan ini untuk dilaporkan.`);
+      alert(`⏳ Tandai Hadir Semua SUDAH tersimpan aman di perangkat ini, tapi belum terkirim ke server (${(rekapSaveResult && rekapSaveResult.error) || 'sebab tidak diketahui'}).\n\nAplikasi akan mengirim ulang OTOMATIS sampai berhasil -- biarkan halaman terbuka sampai label kuning di pojok kiri bawah hilang.`);
     } else {
       // safeSaveObject/safeSaveArray sudah otomatis verifikasi baca-ulang & coba-lagi sendiri
       // di dalamnya (lihat catatan di definisinya) -- kalau sampai di sini dengan ok:true,

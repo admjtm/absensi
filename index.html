@@ -6112,6 +6112,10 @@ function rekapNoteTidakSinkron_(sc){
 }
 function rekapNyambungKeRoster(sc){
   if(!sc || !sc.direkap) return null;
+  // Selama data masih dimuat/disegarkan dari server, isi rekap yang ada di layar bisa saja
+  // belum lengkap (cache lama / rekap per-sesi belum selesai diambil). Jangan dulu divonis
+  // "TIDAK SINKRON" -- tunggu data terbaru selesai diproses supaya tidak muncul alarm merah palsu.
+  if(state.loading || state.refreshing) return null;
   if(!state.students.length) return null; // tidak ada mahasiswa untuk dibandingkan -> jangan asal vonis
   return _rekapObjSinkron_(state.rekap[sc.id]);
 }

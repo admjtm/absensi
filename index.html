@@ -5091,16 +5091,46 @@ function renderZoomableImage(dataUrl, alt, uid){
       <span class="note img-zoom-hint">Cubit (pinch) atau klik dobel foto untuk zoom</span>
     </div>
     <div class="img-zoom-viewport" id="imgZoomViewport_${uid}">
-      <img class="img-zoom-target" id="imgZoomTarget_${uid}" src="${dataUrl}" alt="${escapeHtml(alt)}" style="width:${Math.round(z*100)}%; max-width:none; transform:rotate(${rot}deg);">
+      <div class="img-zoom-stage" id="imgZoomStage_${uid}" style="position:relative;">
+        <img class="img-zoom-target" id="imgZoomTarget_${uid}" src="${dataUrl}" alt="${escapeHtml(alt)}" style="width:${Math.round(z*100)}%; max-width:none;">
+      </div>
     </div>`;
+}
+// PERBAIKAN BUG "FOTO TERPOTONG & TIDAK BISA DI-SCROLL SETELAH DIPUTAR": CSS transform:rotate()
+// hanya memutar gambar secara VISUAL, sedangkan kotak layout-nya tetap seukuran foto asli. Begitu
+// foto tegak diputar 90deg jadi melebar, bagian yang keluar dari kotak (atas/kiri) tidak dihitung
+// sebagai area scroll -- jadi terpotong dan tidak bisa di-scroll. Sekarang ukuran "stage" dihitung
+// ulang sesuai ukuran VISUAL foto setelah diputar (lebar/tinggi ditukar kalau 90/270), dan foto
+// ditaruh di tengahnya, sehingga seluruh foto bisa di-scroll ke atas/bawah/kiri/kanan.
+function layoutImgZoom(uid){
+  const vp = document.getElementById('imgZoomViewport_'+uid);
+  const stage = document.getElementById('imgZoomStage_'+uid);
+  const img = document.getElementById('imgZoomTarget_'+uid);
+  if(!vp || !stage || !img || !img.naturalWidth || !img.naturalHeight) return;
+  const z = imgZoomLevels[uid] || 1;
+  const rot = ((imgRotations[uid] || 0) % 360 + 360) % 360;
+  const sideways = (rot === 90 || rot === 270);
+  const W = vp.clientWidth;
+  if(!W) return;
+  const nw = img.naturalWidth, nh = img.naturalHeight;
+  const visW = W * z;                                  // lebar visual foto (setelah diputar)
+  const imgW = sideways ? visW * nw / nh : visW;       // lebar elemen <img> sebelum diputar
+  const imgH = imgW * nh / nw;
+  stage.style.width  = Math.round(visW) + 'px';
+  stage.style.height = Math.round(sideways ? imgW : imgH) + 'px';
+  img.style.position = 'absolute';
+  img.style.left = '50%';
+  img.style.top = '50%';
+  img.style.width = Math.round(imgW) + 'px';
+  img.style.height = Math.round(imgH) + 'px';
+  img.style.maxWidth = 'none';
+  img.style.transform = 'translate(-50%,-50%) rotate(' + rot + 'deg)';
 }
 function applyImgZoom(uid){
   const z = imgZoomLevels[uid] || 1;
-  const rot = imgRotations[uid] || 0;
-  const img = document.getElementById('imgZoomTarget_'+uid);
   const label = document.getElementById('imgZoomLabel_'+uid);
-  if(img){ img.style.width = Math.round(z*100)+'%'; img.style.transform = 'rotate('+rot+'deg)'; }
   if(label) label.textContent = Math.round(z*100)+'%';
+  layoutImgZoom(uid);
 }
 function attachImgZoomHandlers(root, uid){
   const setZoom = (z)=>{ imgZoomLevels[uid] = Math.max(1, Math.min(4, Math.round(z*10)/10)); applyImgZoom(uid); };
@@ -5117,6 +5147,12 @@ function attachImgZoomHandlers(root, uid){
   if(btnRotR) btnRotR.addEventListener('click', ()=> setRotation((imgRotations[uid]||0)+90));
   const img = root.querySelector('#imgZoomTarget_'+uid);
   if(img){
+    if(img.complete) layoutImgZoom(uid); else img.addEventListener('load', ()=> layoutImgZoom(uid));
+    const vp = root.querySelector('#imgZoomViewport_'+uid);
+    if(vp && typeof ResizeObserver !== 'undefined'){
+      let lastW = vp.clientWidth;
+      new ResizeObserver(()=>{ if(vp.clientWidth !== lastW){ lastW = vp.clientWidth; layoutImgZoom(uid); } }).observe(vp);
+    }
     // Klik dobel (atau tap dobel di HP) untuk cepat perbesar/kembali normal.
     img.addEventListener('dblclick', ()=> setZoom((imgZoomLevels[uid]||1)>1 ? 1 : 2));
   }

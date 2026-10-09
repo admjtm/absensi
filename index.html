@@ -250,6 +250,8 @@
   .excel-table tbody td{padding:6px 10px;}
   .excel-table tbody tr:nth-child(even){background:#FAFBFC;}
   .excel-table tbody tr:hover{background:#EEF4FA;}
+  tr.row-pindah td, .excel-table tbody tr.row-pindah td, .excel-table--fit tbody tr.row-pindah td, .excel-table-total tbody tr.row-pindah td{ background:#F4B6B0 !important; color:#7A1A12 !important; }
+  tr.row-pindah:hover td{ background:#EFA29B !important; }
   /* Tabel dengan banyak kolom (rekap per minggu): lebar tiap kolom diatur presisi lewat <colgroup>
      (lihat renderWeeklyRecap) memakai table-layout:fixed + width:100%, sehingga tabel selalu pas
      memenuhi satu layar tanpa perlu digeser, dan semua kolom S/I/A ukurannya sama persis. */
@@ -3883,10 +3885,25 @@ function renderTabContent(){
   return '';
 }
 
+/* Mahasiswa yang sudah pindah kampus -> barisnya diwarnai merah */
+const MAHASISWA_PINDAH_ = {
+  'd3tm:1F': ['ibnuaziz', 'naufalalismatullah'],
+  'd3tm:1C': ['hafizarfikowahid'],
+};
+function normNamaPindah_(n){ return String(n||'').toLowerCase().replace(/[^a-z]/g,''); }
+function isPindahKampus_(st, key){
+  const list = MAHASISWA_PINDAH_[key || keyBase()];
+  if(!list) return false;
+  const n = normNamaPindah_(st.nama);
+  if(String(st.nim)==='2501011036' && (key || keyBase())==='d3tm:1F') return true; // Ibnuaziz
+  return list.some(x=> n===x);
+}
+function rowPindahCls_(st){ return isPindahKampus_(st) ? ' class="row-pindah"' : ''; }
+
 /* ---- Mahasiswa ---- */
 function renderMahasiswa(){
   const rows = state.students.map((s,i)=>`
-    <tr>
+    <tr${rowPindahCls_(s)}>
       <td class="mono">${i+1}</td>
       <td>${escapeHtml(s.nama)}</td>
       <td class="nim">${escapeHtml(s.nim)}</td>
@@ -4829,7 +4846,7 @@ function renderSummaryMatrix(){
     const jumlah = S+I+A;
     const pktos = 0;
     const komp = I*1 + A*2 + pktos;
-    return `<tr>
+    return `<tr${rowPindahCls_(st)}>
       <td class="mono" style="text-align:center;">${i+1}</td>
       <td class="nim" style="text-align:center;">${escapeHtml(st.nim)}</td>
       <td>${escapeHtml(st.nama)}</td>
@@ -4995,7 +5012,7 @@ function renderWeeklyRecap(){
     const pktos = 0;
     const komp = total.I*1 + total.A*2 + pktos;
     const ket = spKeterangan(total.A);
-    return `<tr>
+    return `<tr${rowPindahCls_(st)}>
       <td class="mono">${i+1}</td>
       <td class="nim">${escapeHtml(st.nim)}</td>
       <td>${escapeHtml(st.nama)}</td>
@@ -5285,7 +5302,7 @@ function renderModal(){
           </div>
         </td>` : '';
       return `
-      <tr>
+      <tr${rowPindahCls_(st)}>
         <td class="mono">${i+1}</td>
         <td>${escapeHtml(st.nama)}</td>
         <td class="nim">${escapeHtml(st.nim)}</td>

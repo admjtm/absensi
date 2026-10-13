@@ -286,6 +286,9 @@
   .excel-table--fit thead th{ padding:4px 3px; font-size:10px; text-align:center; vertical-align:middle; white-space:normal; word-break:break-word; }
   .excel-table--fit tbody td{ white-space:nowrap; }
   .excel-table--fit td.nim, .excel-table--fit td.mono{ font-size:10.5px; }
+  /* NIM TIDAK BOLEH terpotong (tanda titik-titik): kolom BP dilebarkan di renderWeeklyRecap,
+     dan sel NIM dipaksa satu baris tanpa ellipsis + tanpa letter-spacing. */
+  .excel-table--fit td.nim{ overflow:visible; text-overflow:clip; white-space:nowrap; letter-spacing:0; padding-left:2px; padding-right:2px; min-width:92px; }
   .excel-table--fit th:nth-child(3), .excel-table--fit td:nth-child(3){
     text-align:left; white-space:normal;
   }
@@ -4970,7 +4973,7 @@ function renderWeeklyRecap(){
 
   // Colgroup: setiap kolom S/I/A (total maupun per mata kuliah) diberi bobot lebar yang SAMA,
   // supaya semua kolom simetris dan tabel selalu pas dalam 1 layar tanpa perlu digeser ke samping.
-  const W = { no:30, bp:70, nama:120, jam:42, pktos:34, komp:50, ket:58, sia:24, siaSum:34, kosong:46 };
+  const W = { no:30, bp:92, nama:112, jam:42, pktos:34, komp:50, ket:58, sia:24, siaSum:34, kosong:46 };
   let colgroupHtml = `<col style="width:${W.no}px;"><col style="width:${W.bp}px;"><col style="width:${W.nama}px;">`;
   colgroupHtml += `<col style="width:${W.siaSum}px;"><col style="width:${W.siaSum}px;"><col style="width:${W.siaSum}px;">`;
   colgroupHtml += `<col style="width:${W.jam}px;"><col style="width:${W.pktos}px;"><col style="width:${W.komp}px;">`;

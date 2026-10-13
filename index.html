@@ -379,6 +379,22 @@
   .status-opt input:checked + span.A{background:#FAE7E5; border-color:var(--danger); color:var(--danger);}
   .status-opt input:focus-visible + span{outline:2px solid var(--primary-light); outline-offset:1px;}
 
+
+  /* ---------- Menu Surat Peringatan (SP) ---------- */
+  .sp-toolbar{display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:18px;}
+  .sp-actions{display:flex; gap:8px; flex-wrap:wrap;}
+  .sp-section{margin-top:18px;}
+  .sp-prodi-title{font-size:15px; margin:0 0 10px; padding-bottom:6px; border-bottom:2px solid var(--line-strong);}
+  .sp-prodi-title .code{font-family:'IBM Plex Mono',monospace; font-size:12px; background:var(--primary); color:#fff; padding:2px 7px; border-radius:5px; margin-right:6px;}
+  .sp-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px;}
+  .sp-card{border:1px solid var(--line-strong); border-radius:9px; background:var(--paper); padding:12px; display:flex; flex-direction:column; gap:8px; align-items:flex-start;}
+  .sp-card-edit{grid-column:span 2; min-width:0;}
+  .sp-kelas{font-weight:700; font-size:15px;}
+  .sp-dl{text-decoration:none; display:inline-block;}
+  .sp-empty{font-size:12px; color:var(--ink-soft); font-style:italic;}
+  .sp-input{width:100%; box-sizing:border-box; font-size:12px; padding:6px 8px;}
+  @media (max-width:640px){ .sp-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));} .sp-card-edit{grid-column:1 / -1;} }
+
   /* ---------- Tab Statistik: tabel ceklis upload/rekap per minggu ---------- */
   .statistik-table{border-collapse:collapse; width:100%; font-size:11.5px;}
   .statistik-table th,.statistik-table td{border:1px solid var(--line-strong);}
@@ -3727,16 +3743,17 @@ function render(){
   renderNotifBell();
   const app = document.getElementById('app');
   app.innerHTML = `
-    ${renderSelector()}
+    ${state.tab==='sp' ? '' : renderSelector()}
     ${renderTabnav()}
     ${state.refreshing ? `
       <div class="panel" style="padding:10px 16px; margin-bottom:14px; display:flex; align-items:center; gap:10px; border-left:3px solid var(--accent);">
         <span class="mono" style="font-size:16px; line-height:1;">&#8635;</span>
         <span style="font-size:12.5px; color:var(--ink-soft);">Menyegarkan data terbaru dari server&hellip; status kehadiran/rekap di bawah ini bisa berubah sebentar lagi kalau ada rekapan yang baru masuk dari perangkat lain.</span>
       </div>` : ''}
-    ${state.loading ? '<div class="panel"><div class="empty-state"><div class="glyph">&#9203;</div><p>Memuat data kelas&hellip;</p></div></div>' : renderTabContent()}
+    ${(state.loading && state.tab!=='sp') ? '<div class="panel"><div class="empty-state"><div class="glyph">&#9203;</div><p>Memuat data kelas&hellip;</p></div></div>' : renderTabContent()}
   `;
   attachHandlers();
+  attachSPHandlers_();
   renderModal();
 }
 
@@ -3847,6 +3864,191 @@ function renderSelector(){
   </div>`;
 }
 
+const SP_LINKS_DEFAULT = {
+  'd3tm:1A': 'https://drive.google.com/drive/folders/1jiPz1UKRmfENaNRZ7j6OUDUiIz4PH3hB?usp=sharing',
+  'd3tm:1B': 'https://drive.google.com/drive/folders/1BlENdE_dpfID5zFX1PsFqb6gywSoA4rZ?usp=sharing',
+  'd3tm:1C': 'https://drive.google.com/drive/folders/1kX7LEIwt0Hjp7VGQG9Bdjoqd0CeFhIm7?usp=sharing',
+  'd3tm:1D': 'https://drive.google.com/drive/folders/1naXTnCh2LGbzZ1HBBahOiCiGy_ot6Ewf?usp=sharing',
+  'd3tm:1E': 'https://drive.google.com/drive/folders/1CgijF25chHfVB1XYepILrHMzrvsKVNmz?usp=sharing',
+  'd3tm:1F': 'https://drive.google.com/drive/folders/1vrfhC5hCI16omg5FsWB_qclhkrqtEMWV?usp=sharing',
+  'd3tm:2A': 'https://drive.google.com/drive/folders/1EnX15QCPH7InWuHuNc7yDvQw2jbx6LaP?usp=sharing',
+  'd3tm:2B': 'https://drive.google.com/drive/folders/1nQb-gq1y33oi0go3SnEEiThV5eEDLfCM?usp=sharing',
+  'd3tm:2C': 'https://drive.google.com/drive/folders/1j0KETCEsWN-63MSn310ZfmPMfLeEkA-m?usp=sharing',
+  'd3tm:2D': 'https://drive.google.com/drive/folders/1VAb-_auGYI03cQ3NMXXjS6vFUmTTtswn?usp=sharing',
+  'd3tm:2E': 'https://drive.google.com/drive/folders/1oykL7g_uysAbKm_Udl58bFEk61JpUJgU?usp=sharing',
+  'd3tm:2F': 'https://drive.google.com/drive/folders/1_cfitLQeWyf6G71SvkJqsATnl5gutDZ7?usp=sharing',
+  'd3tm:3A': 'https://drive.google.com/drive/folders/17J-1TO2TELX8FrbCTaslFKy63SXx2sXj?usp=sharing',
+  'd3tm:3B': 'https://drive.google.com/drive/folders/1YcmUYIUcGZsZoxkZbv571BX7AAu9VWg9?usp=sharing',
+  'd3tm:3C': 'https://drive.google.com/drive/folders/1uxaFUGQE5swekAxHfr8HrHgX4Zbgm3lp?usp=sharing',
+  'd3tm:3D': 'https://drive.google.com/drive/folders/1-3W-y6wCQWXCNl23aC4KRmbgvmv0m4oj?usp=sharing',
+  'd3tm:3E': 'https://drive.google.com/drive/folders/12cN54iEPtm7_AQ6i4pyWEtPSRk8Yo8Da?usp=sharing',
+  'd3tm:3F': 'https://drive.google.com/drive/folders/1dXk3JJEIMYTID5GRZJkL432_wu3Bqe1_?usp=sharing',
+  'd3tab:1A': 'https://drive.google.com/drive/folders/11oh-ZjnPcn1O2AFopEp8CqywI7RT8xYI?usp=sharing',
+  'd3tab:1B': 'https://drive.google.com/drive/folders/1x8xGswv4upY3zclIN38fsnESF9o-UWWG?usp=sharing',
+  'd3tab:1C': 'https://drive.google.com/drive/folders/175qGN2ITnYtT9aDqtk8lPhjWRh-yb4Xo?usp=sharing',
+  'd3tab:1D': 'https://drive.google.com/drive/folders/1GINE7F4NZ4Mlr6HisGF7pwIXuMxUScYM?usp=sharing',
+  'd3tab:2A': 'https://drive.google.com/drive/folders/1BeWwsQ0zedZKBtpibB7sPELuTL8KplhK?usp=sharing',
+  'd3tab:2B': 'https://drive.google.com/drive/folders/1tQ9SLyAmdSzp8cWGVsDuvPVbEcBOQqZk?usp=sharing',
+  'd3tab:2C': 'https://drive.google.com/drive/folders/1fMouoIt6IWSJxi2ClWbuM3OaE74Oymo3?usp=sharing',
+  'd3tab:3A': 'https://drive.google.com/drive/folders/1LTQeEUUZDr8W0WYc4gs0m4Lx8TANYI6q?usp=sharing',
+  'd3tab:3B': 'https://drive.google.com/drive/folders/11ckp_swbNrxJ7FPBJS-zasQWD5rnAn1-?usp=sharing',
+  'd3tab:3C': 'https://drive.google.com/drive/folders/15lqH322tmYZP8OygkEc__MkALl2HvJOc?usp=sharing',
+  'd4tmpr:1A': 'https://drive.google.com/drive/folders/1E_2gPR-WiaEwlZ5Ob1qk9sQOHlzSTUAj?usp=sharing',
+  'd4tmpr:1B': 'https://drive.google.com/drive/folders/1tfFOwixWMt7FuHp2Ehi-BdTevkkLeTsm?usp=sharing',
+  'd4tmpr:2A': 'https://drive.google.com/drive/folders/1GGrdpFs4KhcFe7Ud1PLMYFlbLMOeossm?usp=sharing',
+  'd4tmpr:2B': 'https://drive.google.com/drive/folders/1HOa-DnQ3VYOBpx3UI0GCqORwdap8t2LS?usp=sharing',
+  'd4tmpr:3A': 'https://drive.google.com/drive/folders/1CoVaDRWvVWT6FG6BkbqVt_RkR9NYNT9e?usp=sharing',
+  'd4tmpr:3B': 'https://drive.google.com/drive/folders/1JmwT0XFE2fCaCeBRidiU6Uz8W8YRPBMe?usp=sharing',
+  'd4rpm:1A': 'https://drive.google.com/drive/folders/1SSr-EVyW1nlVf3UXsjXhO6H-eMUu_ZST?usp=sharing',
+  'd4rpm:1B': 'https://drive.google.com/drive/folders/1ZqfuUpbVPDlF81G2g_PKPj7APIGArov8?usp=sharing',
+  'd4rpm:2A': 'https://drive.google.com/drive/folders/16tga3sWTTgVqLGTetEOyUswbwHmvINoG?usp=sharing',
+  'd4rpm:2B': 'https://drive.google.com/drive/folders/1-Dqlr8RoVes9mle2BFaG-f3z4nt6kKvo?usp=sharing',
+  'd4rpm:3A': 'https://drive.google.com/drive/folders/1Tv7KCrvwHb6f-t2F6NTtvLjEC0LjrZ_k?usp=sharing',
+  'd4rpm:3B': 'https://drive.google.com/drive/folders/1ifLAdsbhN7hsvZ_4Y6Fj6QIdUlFGdAPz?usp=sharing',
+};
+
+// ---------------------------------------------------------------------------------------------
+// MENU "SURAT PERINGATAN (SP)" -- bisa DILIHAT oleh Admin maupun Ketua Kelas (tombol download),
+// tapi hanya ADMIN yang bisa MENGEDIT link Google Drive per kelas. Link bawaan di atas (dari
+// dokumen LINK_G-DRIVE) dipakai sebagai nilai awal; kalau Admin mengubahnya, perubahan disimpan
+// di server (key global 'spLinks:global') sehingga berlaku di semua perangkat.
+// ---------------------------------------------------------------------------------------------
+const SP_LINKS_KEY = 'spLinks:global';
+const SP_LINKS_CACHE_KEY = 'absensiJtm_spLinksCache_v1';
+const spState = { stored:null, loaded:false, loading:false, error:null, prodiFilter:'all', editing:false, saving:false };
+(function(){
+  try{ const raw = localStorage.getItem(SP_LINKS_CACHE_KEY); if(raw){ const o = JSON.parse(raw); if(o && typeof o==='object'){ spState.stored = o; } } }catch(e){}
+})();
+function spSafeUrl_(u){
+  u = String(u||'').trim();
+  return /^https?:\/\//i.test(u) ? u : '';
+}
+function spEffectiveLink_(prodiKey, kelas){
+  const k = prodiKey+':'+kelas;
+  if(spState.stored && Object.prototype.hasOwnProperty.call(spState.stored, k)) return spSafeUrl_(spState.stored[k]);
+  return spSafeUrl_(SP_LINKS_DEFAULT[k]);
+}
+async function loadSPLinks_(){
+  if(spState.loading) return;
+  spState.loading = true; spState.error = null;
+  const r = await safeGetRaw(SP_LINKS_KEY);
+  spState.loading = false;
+  if(r.error){
+    spState.error = 'Gagal mengambil pengaturan link terbaru dari server (menampilkan data yang tersimpan di perangkat ini).';
+  }else{
+    spState.loaded = true;
+    if(r.found && r.value && typeof r.value==='object'){
+      spState.stored = r.value;
+      try{ localStorage.setItem(SP_LINKS_CACHE_KEY, JSON.stringify(r.value)); }catch(e){}
+    }
+  }
+  if(state.tab==='sp') render();
+}
+function renderSP(){
+  const isAdmin = state.role==='admin';
+  if(!isAdmin) spState.editing = false;
+  if(!spState.loaded && !spState.loading && !spState.error) loadSPLinks_();
+  const prodiList = spState.prodiFilter==='all' ? PRODI : PRODI.filter(p=>p.key===spState.prodiFilter);
+  const editing = isAdmin && spState.editing;
+  const sections = prodiList.map(p=>{
+    // Kelas tingkat 4 (4A, 4B) tidak ditampilkan di menu SP.
+    const cards = p.kelas.filter(k=>!String(k).startsWith('4')).map(k=>{
+      const url = spEffectiveLink_(p.key, k);
+      if(editing){
+        return `<div class="sp-card sp-card-edit">
+          <div class="sp-kelas">${escapeHtml(k)}</div>
+          <input type="url" class="sp-input" data-sp-key="${escapeHtml(p.key+':'+k)}" value="${escapeHtml(url)}" placeholder="https://drive.google.com/drive/folders/..." ${spState.saving?'disabled':''}>
+        </div>`;
+      }
+      return `<div class="sp-card">
+        <div class="sp-kelas">${escapeHtml(k)}</div>
+        ${url
+          ? `<a class="btn btn-primary btn-sm sp-dl" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">&#11015; Download SP</a>`
+          : `<span class="sp-empty">Belum ada link</span>`}
+      </div>`;
+    }).join('');
+    return `<div class="sp-section">
+      <h3 class="sp-prodi-title"><span class="code">${escapeHtml(p.kode)}</span> ${escapeHtml(p.nama)}</h3>
+      <div class="sp-grid">${cards}</div>
+    </div>`;
+  }).join('');
+  return `
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Surat Peringatan (SP)</h2>
+        <p>Klik <strong>Download SP</strong> pada kelas yang dituju untuk membuka folder Google Drive SP kelas tersebut.${isAdmin ? ' Sebagai Admin, Anda dapat mengubah link tiap kelas lewat tombol <strong>Edit Link</strong>.' : ''}</p>
+      </div>
+    </div>
+    ${spState.error ? `<div class="note" style="margin-bottom:12px;">${escapeHtml(spState.error)}</div>` : ''}
+    <div class="sp-toolbar">
+      <div class="field" style="max-width:340px; margin:0;">
+        <label>Tampilkan</label>
+        <select id="spProdiFilter" ${spState.saving?'disabled':''}>
+          <option value="all" ${spState.prodiFilter==='all'?'selected':''}>Semua Prodi &amp; Semua Kelas</option>
+          ${PRODI.map(p=>`<option value="${p.key}" ${spState.prodiFilter===p.key?'selected':''}>${escapeHtml(p.nama)}</option>`).join('')}
+        </select>
+      </div>
+      ${isAdmin ? `<div class="sp-actions">
+        ${editing
+          ? `<button type="button" class="btn btn-accent btn-sm" id="spSaveBtn" ${spState.saving?'disabled':''}>${spState.saving?'Menyimpan&hellip;':'Simpan Perubahan'}</button>
+             <button type="button" class="btn btn-ghost btn-sm" id="spCancelBtn" ${spState.saving?'disabled':''}>Batal</button>`
+          : `<button type="button" class="btn btn-primary btn-sm" id="spEditBtn">&#9998; Edit Link</button>`}
+      </div>` : ''}
+    </div>
+    ${spState.loading && !spState.loaded ? '<div class="note" style="margin-bottom:12px;">Memuat link terbaru&hellip;</div>' : ''}
+    ${sections}
+  </div>`;
+}
+function attachSPHandlers_(){
+  const sel = document.getElementById('spProdiFilter');
+  if(sel) sel.addEventListener('change', ()=>{ spState.prodiFilter = sel.value; render(); });
+  const editBtn = document.getElementById('spEditBtn');
+  if(editBtn) editBtn.addEventListener('click', ()=>{
+    if(state.role!=='admin') return; // proteksi: hanya Admin yang boleh mengedit
+    spState.editing = true; render();
+  });
+  const cancelBtn = document.getElementById('spCancelBtn');
+  if(cancelBtn) cancelBtn.addEventListener('click', ()=>{ spState.editing = false; render(); });
+  const saveBtn = document.getElementById('spSaveBtn');
+  if(saveBtn) saveBtn.addEventListener('click', saveSPLinks_);
+}
+async function saveSPLinks_(){
+  if(state.role!=='admin' || spState.saving) return; // proteksi: hanya Admin yang boleh menyimpan
+  const changes = {};
+  let invalid = null;
+  document.querySelectorAll('input[data-sp-key]').forEach(inp=>{
+    const key = inp.dataset.spKey;
+    const val = inp.value.trim();
+    if(val && !spSafeUrl_(val)){ invalid = key; return; }
+    const [pk, kl] = key.split(':');
+    if(val !== spEffectiveLink_(pk, kl)) changes[key] = val;
+  });
+  if(invalid){ alert('Link untuk kelas '+invalid.replace(':',' ')+' tidak valid. Link harus diawali http:// atau https://'); return; }
+  if(!Object.keys(changes).length){ spState.editing = false; render(); return; }
+  spState.saving = true; render();
+  // Ambil dulu data TERBARU dari server supaya tidak menimpa perubahan Admin lain.
+  const latest = await safeGetRaw(SP_LINKS_KEY);
+  if(latest.error){
+    spState.saving = false; render();
+    alert('Gagal terhubung ke server, perubahan belum tersimpan. Coba lagi sebentar lagi.');
+    return;
+  }
+  const base = (latest.found && latest.value && typeof latest.value==='object') ? latest.value : (spState.stored || {});
+  const merged = Object.assign({}, base, changes);
+  const res = await safeSet(SP_LINKS_KEY, merged);
+  spState.saving = false;
+  if(!res.ok){
+    render();
+    alert('Gagal menyimpan ke server: '+(res.error||'tidak diketahui')+'. Perubahan belum tersimpan.');
+    return;
+  }
+  spState.stored = merged;
+  try{ localStorage.setItem(SP_LINKS_CACHE_KEY, JSON.stringify(merged)); }catch(e){}
+  spState.editing = false;
+  render();
+}
+
 function renderTabnav(){
   const allTabs = [
     {id:'mahasiswa', label:'Data Mahasiswa'},
@@ -3855,12 +4057,13 @@ function renderTabnav(){
     {id:'rekap', label:'Rekap Kehadiran'},
     {id:'statistik', label:'Statistik'},
     {id:'rekapsp', label:'Rekap SP'}, // khusus Admin -- lihat filter tabs Ketua Kelas di bawah
+    {id:'sp', label:'Surat Peringatan (SP)'}, // bisa dilihat Admin & Ketua; edit link hanya Admin
   ];
-  // Ketua kelas hanya boleh mengunggah scan absensi dan melihat rekapan/statistik --
+  // Ketua kelas hanya boleh mengunggah scan absensi dan melihat rekapan --
   // tidak boleh mengubah data mahasiswa maupun mata kuliah (itu wewenang Admin), dan tidak
-  // boleh melihat "Rekap SP" (itu juga khusus Admin, dipakai untuk urusan konsultasi/pemanggilan
-  // orang tua mahasiswa, bukan konsumsi Ketua Kelas).
-  const tabs = state.role==='ketua' ? allTabs.filter(t=>t.id==='upload'||t.id==='rekap'||t.id==='statistik') : allTabs;
+  // boleh melihat "Statistik" maupun "Rekap SP" (keduanya khusus Admin; Rekap SP dipakai untuk
+  // urusan konsultasi/pemanggilan orang tua mahasiswa, bukan konsumsi Ketua Kelas).
+  const tabs = state.role==='ketua' ? allTabs.filter(t=>t.id==='upload'||t.id==='rekap'||t.id==='sp') : allTabs;
   return `<div class="tabnav">
     ${tabs.map(t=>`<button class="${state.tab===t.id?'active':''}" data-tab="${t.id}">${t.label}</button>`).join('')}
   </div>`;
@@ -3869,7 +4072,7 @@ function renderTabnav(){
 function renderTabContent(){
   // Proteksi tambahan: kalau Ketua Kelas nyasar ke tab mahasiswa/matkul (mis. lewat state lama),
   // paksa balik ke tab upload -- bukan cuma disembunyikan tombolnya di navigasi.
-  if(state.role==='ketua' && (state.tab==='mahasiswa' || state.tab==='matkul' || state.tab==='rekapsp')){
+  if(state.role==='ketua' && (state.tab==='mahasiswa' || state.tab==='matkul' || state.tab==='rekapsp' || state.tab==='statistik')){
     state.tab = 'upload';
   }
   if(state.tab==='mahasiswa') return renderMahasiswa();
@@ -3885,6 +4088,7 @@ function renderTabContent(){
   if(state.tab==='rekap') return renderRekap();
   if(state.tab==='statistik') return renderStatistik();
   if(state.tab==='rekapsp') return renderRekapSP();
+  if(state.tab==='sp') return renderSP();
   return '';
 }
 

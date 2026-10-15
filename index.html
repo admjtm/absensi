@@ -6534,11 +6534,36 @@ async function bulkMarkWeekHadir(week){
     const monday = weekMondayOf(week, state.semesterStart);
     const saturday = addDaysDate(monday, 5);
     const mondayISO = toISO(monday), saturdayISO = toISO(saturday);
-    const scansInWeek = state.scans.filter(s=> s.tanggal>=mondayISO && s.tanggal<=saturdayISO);
-    if(!scansInWeek.length){ alert('Belum ada scan/sesi yang diupload untuk minggu ini, jadi tidak ada yang bisa ditandai.'); return; }
+    // Sesi yang SUDAH ADA (dari scan dokumen atau manual) di minggu ini
+    let scansInWeek = state.scans.filter(s=> s.tanggal>=mondayISO && s.tanggal<=saturdayISO);
 
-    const ok = confirm(`Tandai HADIR untuk SEMUA ${state.students.length} mahasiswa, di ${scansInWeek.length} sesi (mata kuliah) minggu ${week} ini?\n\nKalau ada mahasiswa yang sebenarnya izin/sakit/alpa di minggu ini, buka "Edit rekap" pada sesi terkait sesudahnya untuk mengoreksi baris mahasiswa itu saja.`);
+    // BARU: untuk setiap matkul yang terjadwal di minggu ini tapi BELUM punya sesi/scan,
+    // siapkan sesi MANUAL (tanpa dokumen) supaya bisa ditandai hadir tanpa upload scan.
+    // Hari yang belum lewat (setelah hari ini) dilewati.
+    const todayISO = toISO(new Date());
+    const newManualScans = [];
+    DAYS_ID.forEach((day,dIdx)=>{
+      const tgl = toISO(addDaysDate(monday, dIdx));
+      if(tgl > todayISO) return;
+      state.matkul.forEach(mk=>{
+        if(!hariArrayOfAtWeek(mk, week).includes(day)) return;
+        const sudahAda = state.scans.some(s=> scanMatchesMatkul_(s, mk) && s.tanggal===tgl)
+                      || newManualScans.some(s=> s.matkulId===mk.id && s.tanggal===tgl);
+        if(sudahAda) return;
+        newManualScans.push({ id:uid(), matkulId:mk.id, matkulNama:mk.nama, tanggal:tgl, dataUrl:null, manual:true, uploadedAt:new Date().toISOString(), direkap:false, flagSalah:false, flagNote:'' });
+      });
+    });
+    const totalSesi = scansInWeek.length + newManualScans.length;
+    if(!totalSesi){ alert('Tidak ada jadwal mata kuliah untuk minggu ini (atau semuanya belum jatuh tempo). Atur "Hari" mata kuliah di tab Mata Kuliah dulu.'); return; }
+
+    const ok = confirm(`Tandai HADIR untuk SEMUA ${state.students.length} mahasiswa, di ${totalSesi} sesi (mata kuliah) minggu ${week} ini?${newManualScans.length ? `\n\n${newManualScans.length} sesi dibuat otomatis dari jadwal (tanpa upload dokumen scan).` : ''}\n\nKalau ada mahasiswa yang sebenarnya izin/sakit/alpa di minggu ini, buka "Edit rekap" pada sesi terkait sesudahnya untuk mengoreksi baris mahasiswa itu saja.`);
     if(!ok) return;
+
+    // Masukkan sesi manual baru ke state (belum ada rekapnya, jadi snapshot undo = null)
+    if(newManualScans.length){
+      state.scans = [...state.scans, ...newManualScans];
+      scansInWeek = [...scansInWeek, ...newManualScans];
+    }
 
     const hadirSemua = {};
     state.students.forEach(st=>{ hadirSemua[st.id] = 'H'; });
@@ -6579,6 +6604,7 @@ async function bulkMarkWeekHadir(week){
         return latest;
       }),
       safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
+        newManualScans.forEach(ns=>{ if(!latest.some(s=>s.id===ns.id)) latest.push({...ns, direkap:true}); });
         return latest.map(s=> scanIds.includes(s.id) ? {...s, direkap:true} : s);
       }),
     ]);

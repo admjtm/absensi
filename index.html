@@ -5040,6 +5040,31 @@ function spKeterangan(aJam){
   return 'Tidak Dapat Melanjutkan Perkuliahan';
 }
 
+// Keterangan SP + penanda KAPAN (minggu ke berapa) mahasiswa pertama kali kena SP tsb,
+// supaya terlihat jelas SP-nya sudah pernah dibuatkan. Contoh:
+//   "SP-1 (Minggu 2), Konsultasi dgn PA"
+//   "SP-2 (Minggu 5), Konsultasi dgn PA | Sebelumnya: SP-1 (Minggu 2)"
+// fw = hasil computeSPFirstWeeks()[studentId] ({sp1,sp2,sp3} = minggu pertama menembus ambang);
+// uptoWeek = minggu yang sedang ditampilkan (SP yang baru terjadi sesudahnya tidak ikut tampil).
+function spKeteranganLengkap(aJam, fw, uptoWeek){
+  const base = spKeterangan(aJam);
+  if(aJam<15 || !fw) return base;
+  const wk = n => (fw['sp'+n]!=null && fw['sp'+n]<=uptoWeek) ? fw['sp'+n] : null;
+  const level = aJam<30 ? 1 : aJam<45 ? 2 : aJam<76 ? 3 : 4;
+  let teks = base;
+  if(level<=3){
+    const cur = wk(level);
+    if(cur!=null) teks = base.replace('SP-'+level, 'SP-'+level+' (Minggu '+cur+')');
+  }
+  const riwayat = [];
+  for(let n=1; n<=Math.min(level-1,3)+(level===4?1:0); n++){
+    const w = wk(n);
+    if(w!=null) riwayat.push('SP-'+n+' (Minggu '+w+')');
+  }
+  if(riwayat.length) teks += ' | '+(level===4?'Riwayat: ':'Sebelumnya: ')+riwayat.join(', ');
+  return teks;
+}
+
 function renderSummaryMatrix(){
   if(!state.students.length || !state.matkul.length){
     return `<div class="panel"><div class="panel-head"><div><h2>Rekap Absensi</h2><p>Format No, BP, Nama, S, I, A, Jumlah, PKTOS</p></div></div>
@@ -5182,7 +5207,7 @@ function renderWeeklyRecap(){
 
   // Colgroup: setiap kolom S/I/A (total maupun per mata kuliah) diberi bobot lebar yang SAMA,
   // supaya semua kolom simetris dan tabel selalu pas dalam 1 layar tanpa perlu digeser ke samping.
-  const W = { no:30, bp:92, nama:112, jam:42, pktos:34, komp:50, ket:58, sia:24, siaSum:34, kosong:46 };
+  const W = { no:30, bp:92, nama:112, jam:42, pktos:34, komp:50, ket:130, sia:24, siaSum:34, kosong:46 };
   let colgroupHtml = `<col style="width:${W.no}px;"><col style="width:${W.bp}px;"><col style="width:${W.nama}px;">`;
   colgroupHtml += `<col style="width:${W.siaSum}px;"><col style="width:${W.siaSum}px;"><col style="width:${W.siaSum}px;">`;
   colgroupHtml += `<col style="width:${W.jam}px;"><col style="width:${W.pktos}px;"><col style="width:${W.komp}px;">`;
@@ -5198,6 +5223,7 @@ function renderWeeklyRecap(){
   });
   colgroupHtml += `<col style="width:${W.ket}px;">`;
 
+  const spFirstWeeks = computeSPFirstWeeks({ students:state.students, matkul:state.matkul, scans:state.scans, rekap:state.rekap, libur:state.libur, semesterStart:state.semesterStart });
   const rows = state.students.map((st,i)=>{
     let dayCells = '';
     DAYS_ID.forEach((day,dIdx)=>{
@@ -5225,7 +5251,7 @@ function renderWeeklyRecap(){
     const jumlahJam = total.S+total.I+total.A;
     const pktos = 0;
     const komp = total.I*1 + total.A*2 + pktos;
-    const ket = spKeterangan(total.A);
+    const ket = spKeteranganLengkap(total.A, spFirstWeeks[st.id], week);
     return `<tr${rowPindahCls_(st)}>
       <td class="mono">${i+1}</td>
       <td class="nim">${escapeHtml(st.nim)}</td>
@@ -6720,6 +6746,7 @@ function buildRekapMingguanBlocks_(weekNumbers){
   function mergeRange(r1,c1,r2,c2){ if(r1===r2 && c1===c2) return; merges.push({s:{r:r1,c:c1},e:{r:r2,c:c2}}); }
 
   let row = 0;
+  const spFirstWeeks = computeSPFirstWeeks({ students:state.students, matkul:state.matkul, scans:state.scans, rekap:state.rekap, libur:state.libur, semesterStart:state.semesterStart });
   weekNumbers.forEach(week=>{
     const monday = weekMondayOf(week, state.semesterStart);
     const saturday = addDaysDate(monday, 5); // Sabtu = akhir minggu kuliah (Senin-Sabtu)
@@ -6806,7 +6833,7 @@ function buildRekapMingguanBlocks_(weekNumbers){
       setCell(r,colJUMLAH,total.S+total.I+total.A);
       setCell(r,colPKTOS,0);
       setCell(r,colKOMP, total.I*1 + total.A*2 + 0);
-      setCell(r,ketCol, spKeterangan(total.A));
+      setCell(r,ketCol, spKeteranganLengkap(total.A, spFirstWeeks[st.id], week));
       r++;
     });
 

@@ -4950,7 +4950,7 @@ function renderRekap(){
 
   const summaryPanel = renderSummaryMatrix();
 
-  return stat + listPanel + summaryPanel;
+  return stat + renderScanTanpaKolomPanel_() + listPanel + summaryPanel;
 }
 
 // Nilai rekap per mahasiswa per sesi bisa berupa:
@@ -5088,6 +5088,32 @@ function spKeteranganLengkap(aJam, fw, uptoWeek){
   return teks;
 }
 
+// Panel peringatan: scan yang tanggalnya jatuh di hari Minggu / sebelum semester. Scan begini
+// TIDAK tampil di Daftar Scan (yang hanya memuat Senin-Sabtu) maupun di kolom hari tabel rekap.
+function renderScanTanpaKolomPanel_(){
+  if(!state.semesterStart) return '';
+  const bad = state.scans.filter(sc=> tanggalTanpaKolom_(sc.tanggal, state.semesterStart))
+    .sort((a,b)=> (a.tanggal||'').localeCompare(b.tanggal||''));
+  if(!bad.length) return '';
+  const rows = bad.map(sc=>{
+    const d = parseISODate(sc.tanggal);
+    const alasan = (!isNaN(d.getTime()) && d.getDay()===0) ? 'hari Minggu' : 'sebelum tanggal mulai semester';
+    return `<tr>
+      <td>${formatDate(sc.tanggal)}<div style="font-size:11px;color:var(--ink-soft);">${alasan}</div></td>
+      <td>${escapeHtml(sc.matkulNama||'')}</td>
+      <td>${sc.direkap ? 'Sudah direkap &mdash; tetap dihitung sesuai isi rekap' : 'Belum direkap &mdash; TIDAK dihitung Alfa'}</td>
+      <td>
+        ${state.role==='admin' ? `<button class="btn btn-primary btn-sm" data-open-rekap="${sc.id}">${sc.direkap?'Edit rekap':'Isi rekap'}</button>
+        <button class="btn btn-danger-ghost btn-sm" data-del-scan="${sc.id}">Hapus</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+  return `<div class="panel" style="border:1px solid var(--danger,#c0392b);">
+    <div class="panel-head"><div><h2>&#9888; Scan dengan tanggal tidak valid (${bad.length})</h2>
+    <p>Scan di bawah bertanggal <strong>Minggu</strong> atau sebelum semester dimulai, sehingga tidak punya kolom di tabel rekap dan tidak muncul di Daftar Scan. Biasanya salah tanggal saat upload. Kalau salah, klik <strong>Hapus</strong> lalu minta Ketua Kelas upload ulang dengan tanggal yang benar.</p></div></div>
+    <table><thead><tr><th>Tanggal</th><th>Mata Kuliah</th><th>Status</th><th style="width:200px;">Aksi</th></tr></thead><tbody>${rows}</tbody></table>
+  </div>`;
+}
 function renderSummaryMatrix(){
   if(!state.students.length || !state.matkul.length){
     return `<div class="panel"><div class="panel-head"><div><h2>Rekap Absensi</h2><p>Format No, BP, Nama, S, I, A, Jumlah, PKTOS</p></div></div>
@@ -6001,6 +6027,7 @@ function attachHandlers(){
   });
 
   const uploadForm = document.getElementById('uploadScanForm');
+  pasangCekHariMinggu_(uploadForm);
   if(uploadForm) uploadForm.addEventListener('submit', async (e)=>{
     e.preventDefault();
     const fd = new FormData(uploadForm);
@@ -6008,6 +6035,7 @@ function attachHandlers(){
     const tanggal = fd.get('tanggal');
     const file = fd.get('file');
     if(!matkulId || !tanggal || !file || !file.size){ alert('Lengkapi semua isian.'); return; }
+    if(isHariMinggu_(tanggal)){ alert(PESAN_TANGGAL_MINGGU); return; } // lapis 3: jaga-jaga kalau lapis 1-2 terlewati
     const mk = state.matkul.find(m=>m.id===matkulId);
     const submitBtn = uploadForm.querySelector('button[type="submit"]');
     submitBtn.disabled = true; submitBtn.textContent = 'Mengunggah...';
@@ -6042,6 +6070,7 @@ function attachHandlers(){
     openOrCreateManualSession(b.dataset.manualRekap, b.dataset.manualRekapTanggal);
   }));
   const manualRekapForm = document.getElementById('manualRekapForm');
+  pasangCekHariMinggu_(manualRekapForm);
   if(manualRekapForm) manualRekapForm.addEventListener('submit', (e)=>{
     e.preventDefault();
     const fd = new FormData(manualRekapForm);
@@ -6324,10 +6353,25 @@ function isLiburSesi(matkulId, tanggal){
 // TETAP masuk di sini (total pertemuan/jam matkul TIDAK berkurang) -- yang berubah hanya
 // cara sesi itu dihitung per mahasiswa, lihat isLiburSesi() dipakai di hitungRekapMatkul,
 // sessionStatusForDate, dan cumulativeSIA.
+// Tanggal yang TIDAK PUNYA kolom di tabel Rekap per Minggu maupun Daftar Scan: hari Minggu
+// (sistem ini hanya mengenal Senin-Sabtu) atau sebelum Tanggal Mulai Semester.
+function tanggalTanpaKolom_(dateStr, semesterStart){
+  if(!dateStr) return true;
+  const d = parseISODate(dateStr);
+  if(isNaN(d.getTime())) return true;
+  if(d.getDay()===0) return true;
+  if(semesterStart && weekIndexForDate(dateStr, semesterStart)==null) return true;
+  return false;
+}
 function allSessionDatesForMatkul(mk, uptoDate){
   const set = new Set(expectedSessionDatesForMatkul(mk, uptoDate));
   state.scans.forEach(sc=>{
-    if(scanMatchesMatkul_(sc, mk) && parseISODate(sc.tanggal) <= uptoDate) set.add(sc.tanggal);
+    if(scanMatchesMatkul_(sc, mk) && parseISODate(sc.tanggal) <= uptoDate){
+      // Scan bertanggal Minggu / sebelum semester yang BELUM direkap = hampir pasti salah tanggal
+      // (bukan pertemuan nyata) -> JANGAN dihitung Alfa otomatis. Muncul di panel peringatan.
+      if(!sc.direkap && tanggalTanpaKolom_(sc.tanggal, state.semesterStart)) return;
+      set.add(sc.tanggal);
+    }
   });
   return Array.from(set).sort();
 }
@@ -6505,7 +6549,10 @@ function expectedSessionDatesForMatkul_g(mk, uptoDate, semesterStart){
 function allSessionDatesForMatkul_g(mk, uptoDate, semesterStart, scans){
   const set = new Set(expectedSessionDatesForMatkul_g(mk, uptoDate, semesterStart));
   (scans||[]).forEach(sc=>{
-    if(scanMatchesMatkul_(sc, mk) && parseISODate(sc.tanggal) <= uptoDate) set.add(sc.tanggal);
+    if(scanMatchesMatkul_(sc, mk) && parseISODate(sc.tanggal) <= uptoDate){
+      if(!sc.direkap && tanggalTanpaKolom_(sc.tanggal, semesterStart)) return;
+      set.add(sc.tanggal);
+    }
   });
   return Array.from(set).sort();
 }
@@ -6561,6 +6608,7 @@ function openOrCreateManualSession(matkulId, tanggal){
   const mk = state.matkul.find(m=>m.id===matkulId);
   if(!mk){ alert('Mata kuliah tidak ditemukan.'); return; }
   if(!tanggal){ alert('Tanggal tidak valid.'); return; }
+  if(isHariMinggu_(tanggal)){ alert(PESAN_TANGGAL_MINGGU); return; }
   if(!state.students.length){ alert('Belum ada data mahasiswa di kelas ini.'); return; }
   const existing = state.scans.find(s=> scanMatchesMatkul_(s, mk) && s.tanggal===tanggal);
   if(existing){
@@ -6912,7 +6960,49 @@ function exportTotalRecapExcel(){
 function escapeHtml(str){
   return String(str).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-function todayStr(){ return new Date().toISOString().slice(0,10); }
+// PERBAIKAN BUG TANGGAL MUNDUR 1 HARI: dulu pakai toISOString() (UTC). Di WIB (UTC+7), antara
+// jam 00.00-07.00 tanggal UTC masih HARI KEMARIN -> form Upload/Libur terisi tanggal kemarin
+// (Senin pagi jadi MINGGU). Sesi bertanggal Minggu tidak punya kolom hari & tidak muncul di
+// Daftar Scan, tapi ikut dihitung Alfa -> Alfa "hantu" di kolom JUMLAH. Sekarang tanggal lokal.
+function todayStr(){ return toISO(new Date()); }
+// ---- LARANGAN TANGGAL KULIAH HARI MINGGU ----
+// Sistem ini hanya mengenal hari kuliah Senin-Sabtu. Scan/sesi bertanggal Minggu tidak punya
+// kolom di tabel rekap dan tidak tampil di Daftar Scan, jadi dulu jadi "sesi hantu" yang ikut
+// dihitung Alfa tanpa bisa dilihat. Karena <input type="date"> tidak bisa menonaktifkan hari
+// tertentu, larangan dipasang 3 lapis: (1) peringatan merah langsung saat tanggal dipilih,
+// (2) tombol kirim dinonaktifkan + validasi form, (3) pengecekan ulang saat submit.
+const PESAN_TANGGAL_MINGGU = 'Tanggal kuliah tidak boleh hari Minggu (tidak ada perkuliahan). Pilih tanggal Senin sampai Sabtu.';
+function isHariMinggu_(dateStr){
+  if(!dateStr) return false;
+  const d = parseISODate(dateStr);
+  return !isNaN(d.getTime()) && d.getDay()===0;
+}
+function pasangCekHariMinggu_(form){
+  if(!form) return;
+  const inp = form.querySelector('input[name="tanggal"]');
+  if(!inp) return;
+  let warn = form.querySelector('.tgl-minggu-warn');
+  if(!warn){
+    warn = document.createElement('div');
+    warn.className = 'tgl-minggu-warn';
+    warn.setAttribute('role','alert');
+    warn.style.cssText = 'display:none; color:var(--danger,#c0392b); font-size:12.5px; font-weight:600; margin-top:4px; max-width:260px;';
+    inp.parentNode.appendChild(warn);
+  }
+  const btn = form.querySelector('button[type="submit"]');
+  const awalDisabled = btn ? btn.disabled : false;
+  const cek = ()=>{
+    const minggu = isHariMinggu_(inp.value);
+    warn.style.display = minggu ? 'block' : 'none';
+    warn.textContent = minggu ? PESAN_TANGGAL_MINGGU : '';
+    inp.setCustomValidity(minggu ? PESAN_TANGGAL_MINGGU : '');
+    if(btn) btn.disabled = minggu || awalDisabled;
+  };
+  inp.addEventListener('input', cek);
+  inp.addEventListener('change', cek);
+  cek();
+}
+
 function formatDate(d){
   const dt = new Date(d+'T00:00:00');
   return dt.toLocaleDateString('id-ID', {day:'2-digit', month:'short', year:'numeric'});

@@ -4962,6 +4962,27 @@ function renderRekap(){
 // Fungsi ini SATU-SATUNYA tempat yang menerjemahkan nilai rekap (apapun bentuknya) jadi
 // jumlah jam H/S/I/A -- supaya semua penghitungan (rekap per matkul, rekap mingguan, rekap
 // total gabungan, export Excel) otomatis konsisten begitu format baru ini dipakai.
+// PERBAIKAN BUG "ALFA MUNCUL TIBA-TIBA": nilai rekap 1 mahasiswa untuk 1 sesi yang SUDAH direkap.
+// Dulu, kalau id mahasiswa tidak ada di dalam isi rekap sesi itu (mis. mahasiswa baru masuk
+// roster / roster sempat dimuat dari cache lama saat rekap disimpan), nilainya kosong dan
+// breakdownJamStatus() menganggapnya ALPA SELURUH JAM sesi -- padahal form "Edit rekap" dan
+// labelForRekapValue() menganggap nilai kosong = HADIR. Akibatnya layar Rekap menampilkan
+// Alfa, sementara waktu admin buka "Edit rekap" mahasiswa itu terlihat Hadir (default).
+// Sekarang SEMUA penghitungan memakai aturan yang sama dengan form: kosong = Hadir, SELAMA
+// rekap sesi itu memang nyambung ke roster. Rekap kosong / yatim (tidak nyambung ke satupun
+// mahasiswa sekarang) tetap dihitung Alpa + tetap memunculkan peringatan "Tidak Sinkron".
+// Return undefined = jatuh ke aturan Alpa di breakdownJamStatus().
+function rekapValForStudent_(r, studentId, students){
+  if(!r) return undefined;
+  const keys = Object.keys(r);
+  if(!keys.length) return undefined;
+  if(Object.prototype.hasOwnProperty.call(r, studentId)){
+    const v = r[studentId];
+    return (v===null || v===undefined || v==='') ? 'H' : v;
+  }
+  const nyambung = Array.isArray(students) && students.some(st=> Object.prototype.hasOwnProperty.call(r, st.id));
+  return nyambung ? 'H' : undefined;
+}
 function breakdownJamStatus(val, totalJam){
   totalJam = totalJam || 0;
   if(val && typeof val==='object' && val.type==='partial'){
@@ -5012,7 +5033,7 @@ function hitungRekapMatkul(matkulId){
   state.students.forEach(st=>{
     let Sjam=0, Ijam=0, Ajam=0;
     dates.forEach(tanggal=>{
-      const sc = state.scans.find(s=>s.matkulId===matkulId && s.tanggal===tanggal);
+      const sc = findScanForSession_(mk, tanggal);
       if(isLiburSesi(matkulId, tanggal) && !sc) return; // Dosen Tidak Masuk & belum ada scan pengganti -> tidak dihitung S/I/A sama sekali (tapi tetap masuk totalPertemuan)
       if(!sc || !sc.direkap){
         // Belum diupload sama sekali, ATAU sudah diupload tapi admin belum mengisi
@@ -5021,7 +5042,7 @@ function hitungRekapMatkul(matkulId){
         return;
       }
       const r = state.rekap[sc.id];
-      const val = r ? r[st.id] : null;
+      const val = rekapValForStudent_(r, st.id, state.students);
       const b = breakdownJamStatus(val, jamPerPertemuan);
       Sjam += b.S; Ijam += b.I; Ajam += b.A;
     });
@@ -5528,7 +5549,7 @@ function renderModal(){
     const existingRekap = state.rekap[sc.id] || {};
     // Jam per pertemuan utk mata kuliah sesi ini -- dipakai supaya kolom "Jam Manual"
     // tahu batas maksimal jam yg bisa diisi (mis. 4 jam), dan sisanya otomatis Alpa.
-    const mkSesi = state.matkul.find(m=>m.id===sc.matkulId);
+    const mkSesi = state.matkul.find(m=>m.id===sc.matkulId) || state.matkul.find(m=>scanMatchesMatkul_(sc, m));
     const jamSesi = mkSesi ? (mkSesi.jam||1) : 1;
     const rows = state.students.map((st,i)=>{
       const existingVal = existingRekap[st.id];
@@ -6306,7 +6327,7 @@ function isLiburSesi(matkulId, tanggal){
 function allSessionDatesForMatkul(mk, uptoDate){
   const set = new Set(expectedSessionDatesForMatkul(mk, uptoDate));
   state.scans.forEach(sc=>{
-    if(sc.matkulId===mk.id && parseISODate(sc.tanggal) <= uptoDate) set.add(sc.tanggal);
+    if(scanMatchesMatkul_(sc, mk) && parseISODate(sc.tanggal) <= uptoDate) set.add(sc.tanggal);
   });
   return Array.from(set).sort();
 }
@@ -6437,7 +6458,7 @@ function sessionStatusForDate(mk, dateStr, studentId){
     return sudahLewat ? {S:0,I:0,A:jam} : {S:0,I:0,A:0};
   }
   const r = state.rekap[sc.id];
-  const val = r ? r[studentId] : null;
+  const val = rekapValForStudent_(r, studentId, state.students);
   const b = breakdownJamStatus(val, jam);
   return {S:b.S, I:b.I, A:b.A};
 }
@@ -6456,7 +6477,7 @@ function cumulativeSIA(uptoDate, matkulId, studentId){
       return;
     }
     const r = state.rekap[sc.id];
-    const val = r ? r[studentId] : null;
+    const val = rekapValForStudent_(r, studentId, state.students);
     const b = breakdownJamStatus(val, jam);
     S+=b.S; I+=b.I; A+=b.A;
   });
@@ -6484,7 +6505,7 @@ function expectedSessionDatesForMatkul_g(mk, uptoDate, semesterStart){
 function allSessionDatesForMatkul_g(mk, uptoDate, semesterStart, scans){
   const set = new Set(expectedSessionDatesForMatkul_g(mk, uptoDate, semesterStart));
   (scans||[]).forEach(sc=>{
-    if(sc.matkulId===mk.id && parseISODate(sc.tanggal) <= uptoDate) set.add(sc.tanggal);
+    if(scanMatchesMatkul_(sc, mk) && parseISODate(sc.tanggal) <= uptoDate) set.add(sc.tanggal);
   });
   return Array.from(set).sort();
 }
@@ -6512,7 +6533,7 @@ function cumulativeAJam_g(uptoDate, classData, studentId){
       if(isLiburSesi_g(classData.libur, mk.id, tanggal) && !sc) return;
       if(!sc || !sc.direkap){ A += jam; return; }
       const r = classData.rekap[sc.id];
-      const val = r ? r[studentId] : null;
+      const val = rekapValForStudent_(r, studentId, classData.students);
       const b = breakdownJamStatus(val, jam);
       A += b.A;
     });

@@ -294,6 +294,8 @@
   }
   .excel-table--fit tbody tr:nth-child(even) td{ background:#FAFBFC; }
   .excel-table--fit td.ket-cell{ text-align:left; white-space:normal; }
+  .excel-table--fit td.sp-link-cell{ text-align:center; white-space:nowrap; font-size:10.5px; }
+  .excel-table--fit a.sp-link{ color:var(--primary); font-weight:600; text-decoration:underline; }
   /* Tabel "Rekap Total Gabungan Semua Mata Kuliah" -- dibedakan dari tabel Rekap per Minggu
      dengan header solid warna korporat + aksen warna lembut pada kolom S/I/A, tanpa
      berlebihan supaya tetap terlihat profesional/rapi. */
@@ -3946,7 +3948,7 @@ async function loadSPLinks_(){
       try{ localStorage.setItem(SP_LINKS_CACHE_KEY, JSON.stringify(r.value)); }catch(e){}
     }
   }
-  if(state.tab==='sp') render();
+  if(state.tab==='sp' || state.tab==='rekap') render();
 }
 function renderSP(){
   const isAdmin = state.role==='admin';
@@ -5256,7 +5258,7 @@ function renderWeeklyRecap(){
 
   // Colgroup: setiap kolom S/I/A (total maupun per mata kuliah) diberi bobot lebar yang SAMA,
   // supaya semua kolom simetris dan tabel selalu pas dalam 1 layar tanpa perlu digeser ke samping.
-  const W = { no:30, bp:92, nama:112, jam:42, pktos:34, komp:50, ket:130, sia:24, siaSum:34, kosong:46 };
+  const W = { no:30, bp:92, nama:112, jam:42, pktos:34, komp:50, ket:130, sp:58, sia:24, siaSum:34, kosong:46 };
   let colgroupHtml = `<col style="width:${W.no}px;"><col style="width:${W.bp}px;"><col style="width:${W.nama}px;">`;
   colgroupHtml += `<col style="width:${W.siaSum}px;"><col style="width:${W.siaSum}px;"><col style="width:${W.siaSum}px;">`;
   colgroupHtml += `<col style="width:${W.jam}px;"><col style="width:${W.pktos}px;"><col style="width:${W.komp}px;">`;
@@ -5270,7 +5272,18 @@ function renderWeeklyRecap(){
       colgroupHtml += `<col style="width:${W.sia}px;"><col style="width:${W.sia}px;"><col style="width:${W.sia}px;">`;
     });
   });
-  colgroupHtml += `<col style="width:${W.ket}px;">`;
+  colgroupHtml += `<col style="width:${W.ket}px;"><col style="width:${W.sp}px;">`;
+
+  // Kolom "LIHAT SP": link Google Drive SP untuk kelas yang sedang dipilih (sumber sama dengan menu SP).
+  if(!spState.loaded && !spState.loading && !spState.error) loadSPLinks_();
+  const spUrl = spEffectiveLink_(state.prodi, state.kelas);
+  // Link hanya ditampilkan untuk mahasiswa yang kena SP (Alpa kumulatif >= 15 jam); yang "OK PA" dikosongkan.
+  const spCellFor = aJam => {
+    if(aJam < 15) return `<td class="sp-link-cell"></td>`;
+    return spUrl
+      ? `<td class="sp-link-cell"><a href="${escapeHtml(spUrl)}" target="_blank" rel="noopener noreferrer" class="sp-link">Lihat SP</a></td>`
+      : `<td class="sp-link-cell" style="color:var(--ink-soft);" title="Link SP kelas ini belum diisi di menu SP">&mdash;</td>`;
+  };
 
   const spFirstWeeks = computeSPFirstWeeks({ students:state.students, matkul:state.matkul, scans:state.scans, rekap:state.rekap, libur:state.libur, semesterStart:state.semesterStart });
   const rows = state.students.map((st,i)=>{
@@ -5313,6 +5326,7 @@ function renderWeeklyRecap(){
       <td class="mono" style="font-weight:700;">${komp}</td>
       ${dayCells}
       <td class="ket-cell">${escapeHtml(ket)}</td>
+      ${spCellFor(total.A)}
     </tr>`;
   }).join('');
 
@@ -5356,6 +5370,7 @@ function renderWeeklyRecap(){
             <th rowspan="3">JUMLAH<br>KOMPENSASI</th>
             ${dayHeaderCells}
             <th rowspan="3">KETERANGAN</th>
+            <th rowspan="3">LIHAT<br>SP</th>
           </tr>
           <tr>
             <th rowspan="2" class="sia-cell">S</th><th rowspan="2" class="sia-cell">I</th><th rowspan="2" class="sia-cell">A</th>

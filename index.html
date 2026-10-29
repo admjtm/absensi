@@ -4103,6 +4103,7 @@ const MAHASISWA_PINDAH_ = {
   'd3tm:1F': ['ibnuaziz', 'naufalalismatullah'],
   'd3tm:1C': ['hafizarfikowahid'],
   'd3tm:1A': ['muhammadfathanmaliqassariy'],
+  'd3tm:1B': ['naufalafif'], // Naufal Afif
   'd3tab:1B': ['nabilsetiawan'],
   'd4rpm:1A': ['mraflypashya', 'muhammadraflypashya'], // M Rafly Pashya -- tidak kuliah lagi
   'd4tmpr:1B': ['makilalmunawar', 'rakanabiyyialfafa'], // M. Akil Al Munawar & Rakan Abiyyi Alfafa -- tidak kuliah lagi
@@ -5277,9 +5278,10 @@ function renderWeeklyRecap(){
   // Kolom "LIHAT SP": link Google Drive SP untuk kelas yang sedang dipilih (sumber sama dengan menu SP).
   if(!spState.loaded && !spState.loading && !spState.error) loadSPLinks_();
   const spUrl = spEffectiveLink_(state.prodi, state.kelas);
-  // Link hanya ditampilkan untuk mahasiswa yang kena SP (Alpa kumulatif >= 15 jam); yang "OK PA" dikosongkan.
-  const spCellFor = aJam => {
-    if(aJam < 15) return `<td class="sp-link-cell"></td>`;
+  // Link hanya ditampilkan untuk mahasiswa yang kena SP (Alpa kumulatif >= 15 jam); yang "OK PA" dan
+  // yang barisnya merah (pindah kampus / tidak kuliah lagi) dikosongkan.
+  const spCellFor = (aJam, st) => {
+    if(isPindahKampus_(st) || aJam < 15) return `<td class="sp-link-cell"></td>`;
     return spUrl
       ? `<td class="sp-link-cell"><a href="${escapeHtml(spUrl)}" target="_blank" rel="noopener noreferrer" class="sp-link">Lihat SP</a></td>`
       : `<td class="sp-link-cell" style="color:var(--ink-soft);" title="Link SP kelas ini belum diisi di menu SP">&mdash;</td>`;
@@ -5326,7 +5328,7 @@ function renderWeeklyRecap(){
       <td class="mono" style="font-weight:700;">${komp}</td>
       ${dayCells}
       <td class="ket-cell">${escapeHtml(ket)}</td>
-      ${spCellFor(total.A)}
+      ${spCellFor(total.A, st)}
     </tr>`;
   }).join('');
 

@@ -5352,13 +5352,13 @@ function renderWeeklyRecap(){
       ${state.role==='admin' && state.lastBulkHadir && state.lastBulkHadir.week===week ? `<button class="btn btn-ghost btn-sm" id="undoBulkMarkWeekHadirBtn" style="color:var(--danger); border-color:var(--danger);">&#8617; Urungkan Tandai Hadir Semua</button>` : ''}
       <div style="display:flex; align-items:center; gap:4px; border:1px solid var(--line-strong); border-radius:8px; padding:2px;">
         <button class="btn btn-ghost btn-sm" id="rekapZoomOut" title="Perkecil tampilan tabel" style="padding:4px 10px;">&minus;</button>
-        <span class="mono" id="rekapZoomLabel" style="font-size:12px; min-width:42px; text-align:center;">${Math.round((state.rekapZoom||1)*100)}%</span>
+        <span class="mono" id="rekapZoomLabel" style="font-size:12px; min-width:42px; text-align:center;">&hellip;</span>
         <button class="btn btn-ghost btn-sm" id="rekapZoomIn" title="Perbesar tampilan tabel" style="padding:4px 10px;">&plus;</button>
-        <button class="btn btn-ghost btn-sm" id="rekapZoomReset" title="Kembalikan ke ukuran normal" style="padding:4px 10px; font-size:11px;">Reset</button>
+        <button class="btn btn-ghost btn-sm" id="rekapZoomReset" title="Kembalikan ke ukuran pas layar" style="padding:4px 10px; font-size:11px;">Reset</button>
       </div>
     </div>
     <div class="excel-table-scroll">
-      <div id="rekapZoomWrap" style="zoom:${state.rekapZoom||1};">
+      <div id="rekapZoomWrap" style="zoom:1;">
       <table class="excel-table excel-table--fit">
         <colgroup>${colgroupHtml}</colgroup>
         <thead>
@@ -6286,20 +6286,42 @@ function attachHandlers(){
   // Kontrol zoom tabel Rekap Mingguan: perbesar/perkecil tampilan (min 60%, max 200%),
   // supaya angka S/I/A yang kecil-kecil bisa dibaca lebih jelas saat perlu, tanpa mengubah
   // ukuran default tabel (yang sengaja dibuat kompak supaya muat 1 layar).
+  // AUTO-FIT: tabel otomatis diperkecil sesuai lebar layar sehingga SELURUH kolom (sampai LIHAT SP)
+  // terlihat tanpa scroll ke samping. state.rekapZoom adalah pengali di atas ukuran "pas layar"
+  // (1 = pas layar; tombol + / - memperbesar/memperkecil dari situ; Reset = kembali pas layar).
+  const rekapFitScale_ = ()=>{
+    const wrap = document.getElementById('rekapZoomWrap');
+    if(!wrap) return 1;
+    const box = wrap.parentElement;
+    const cols = wrap.querySelectorAll('colgroup col');
+    let natural = 0;
+    cols.forEach(c=>{ natural += parseFloat(c.style.width) || 0; });
+    const avail = box ? box.clientWidth - 4 : 0;
+    if(!natural || avail<=0) return 1;
+    return Math.min(1, avail / natural);
+  };
   const applyRekapZoom = ()=>{
     const wrap = document.getElementById('rekapZoomWrap');
     const label = document.getElementById('rekapZoomLabel');
-    if(wrap) wrap.style.zoom = state.rekapZoom;
-    if(label) label.textContent = Math.round(state.rekapZoom*100)+'%';
+    if(!wrap) return;
+    const z = rekapFitScale_() * (state.rekapZoom||1);
+    wrap.style.zoom = z;
+    if(label) label.textContent = Math.round(z*100)+'%';
   };
+  applyRekapZoom();
+  if(!window.__rekapFitResizeBound){
+    window.__rekapFitResizeBound = true;
+    window.addEventListener('resize', ()=>{ if(window.__applyRekapZoom) window.__applyRekapZoom(); });
+  }
+  window.__applyRekapZoom = applyRekapZoom;
   const rekapZoomOut = document.getElementById('rekapZoomOut');
   if(rekapZoomOut) rekapZoomOut.addEventListener('click', ()=>{
-    state.rekapZoom = Math.max(0.6, Math.round(((state.rekapZoom||1)-0.1)*10)/10);
+    state.rekapZoom = Math.max(0.5, Math.round(((state.rekapZoom||1)-0.1)*10)/10);
     applyRekapZoom();
   });
   const rekapZoomIn = document.getElementById('rekapZoomIn');
   if(rekapZoomIn) rekapZoomIn.addEventListener('click', ()=>{
-    state.rekapZoom = Math.min(2, Math.round(((state.rekapZoom||1)+0.1)*10)/10);
+    state.rekapZoom = Math.min(3, Math.round(((state.rekapZoom||1)+0.1)*10)/10);
     applyRekapZoom();
   });
   const rekapZoomReset = document.getElementById('rekapZoomReset');

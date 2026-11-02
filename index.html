@@ -523,6 +523,22 @@
   }
   .footer-note{max-width:1720px; margin:0 auto; padding:0 20px 40px; font-size:11.5px; color:var(--ink-soft); text-align:center;}
 
+  /* ---- Rekap per minggu di HP: ukuran normal + scroll ke samping (tidak diperas) ---- */
+  html{ -webkit-text-size-adjust:100%; text-size-adjust:100%; }
+  @media (max-width:899px){
+    .excel-table-scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; }
+    .excel-table--fit{ width:max-content; max-width:none; }
+    .excel-table--fit thead th{ word-break:normal; overflow-wrap:normal; hyphens:none; white-space:normal; font-size:11px; padding:5px 4px; line-height:1.25; }
+    .excel-table--fit th, .excel-table--fit td{ font-size:11.5px; padding:5px 4px; }
+    .excel-table--fit tbody td{ text-overflow:clip; }
+    /* Kolom nama: tampil penuh, boleh turun baris, tidak jadi "DA..." */
+    .excel-table--fit th:nth-child(3), .excel-table--fit td:nth-child(3){ white-space:normal; overflow:visible; text-overflow:clip; min-width:112px; }
+    .excel-table--fit td.nim{ font-size:11px; }
+    .excel-table--fit td.ket-cell{ overflow:visible; text-overflow:clip; min-width:130px; }
+    /* Kolom No, BP/NIM, Nama menempel di kiri saat digeser */
+    .excel-table--fit th:nth-child(1), .excel-table--fit td:nth-child(1){ position:sticky; left:0; z-index:3; background:#F4F6F8; }
+    .excel-table--fit tbody td:nth-child(1){ background:#fff; }
+  }
   @media (max-width:640px){
     .panel{padding:18px;}
     .topbar-inner{flex-direction:column; align-items:flex-start;}
@@ -6297,6 +6313,14 @@ function attachHandlers(){
     let natural = 0;
     cols.forEach(c=>{ natural += parseFloat(c.style.width) || 0; });
     const avail = box ? box.clientWidth - 4 : 0;
+    // Di HP/tablet kecil: JANGAN diperkecil paksa (bikin teks dempet & terpotong).
+    // Tabel tampil ukuran normal dan digeser ke samping.
+    const tbl = wrap.querySelector('table');
+    if(window.innerWidth <= 899){
+      if(tbl && natural) tbl.style.width = natural+'px';
+      return 1;
+    }
+    if(tbl) tbl.style.width = '';
     if(!natural || avail<=0) return 1;
     return Math.min(1, avail / natural);
   };

@@ -6070,6 +6070,13 @@ function attachHandlers(){
     if(!matkulId || !tanggal || !file || !file.size){ alert('Lengkapi semua isian.'); return; }
     if(isHariMinggu_(tanggal)){ alert(PESAN_TANGGAL_MINGGU); return; } // lapis 3: jaga-jaga kalau lapis 1-2 terlewati
     const mk = state.matkul.find(m=>m.id===matkulId);
+    // CEK DUPLIKAT: matkul + tanggal yang sama yang sudah punya scan dokumen -> tolak dengan peringatan.
+    // (Sesi manual tanpa dokumen tidak dihitung, supaya scan dokumen tetap bisa diupload belakangan.)
+    const sudahUpload = state.scans.find(s=> s.dataUrl && s.tanggal===tanggal && (mk ? scanMatchesMatkul_(s, mk) : s.matkulId===matkulId));
+    if(sudahUpload){
+      alert('⚠️ Mata kuliah "' + (mk ? mk.nama : '') + '" untuk tanggal ' + formatDate(tanggal) + ' SUDAH diupload' + (sudahUpload.direkap ? ' dan SUDAH direkap' : '') + '.\n\nUpload dibatalkan. Jika foto sebelumnya salah, minta Admin menghapus scan lama terlebih dahulu.');
+      return;
+    }
     const submitBtn = uploadForm.querySelector('button[type="submit"]');
     submitBtn.disabled = true; submitBtn.textContent = 'Mengunggah...';
     try{
@@ -6717,10 +6724,28 @@ async function bulkMarkWeekHadir(week){
         newManualScans.push({ id:uid(), matkulId:mk.id, matkulNama:mk.nama, tanggal:tgl, dataUrl:null, manual:true, uploadedAt:new Date().toISOString(), direkap:false, flagSalah:false, flagNote:'' });
       });
     });
+    // CEK SUDAH DIREKAP: sesi yang sudah direkap (lewat Tandai Hadir Semua atau rekap manual).
+    // Admin diberi pilihan: LEWATI (rekap lama aman) atau TIMPA (jadi Hadir semua).
+    const sudahDirekapList = scansInWeek.filter(s=>s.direkap);
+    const daftarSudah = sudahDirekapList.map(s=>'• '+(s.matkulNama||'(matkul)')+' - '+formatDate(s.tanggal)).join('\n');
+    let timpaDirekap = false;
+    if(sudahDirekapList.length){
+      timpaDirekap = confirm('⚠️ '+sudahDirekapList.length+' sesi minggu '+week+' SUDAH direkap:\n\n'+daftarSudah+'\n\nKlik OK  = TIMPA juga sesi yang sudah direkap (semua jadi Hadir).\nKlik Batal = LEWATI sesi yang sudah direkap (rekap lama tetap aman).');
+      if(!timpaDirekap){
+        scansInWeek = scansInWeek.filter(s=>!s.direkap);
+        if(!scansInWeek.length && !newManualScans.length){
+          alert('Semua sesi minggu '+week+' sudah direkap dan dilewati. Tidak ada yang ditandai.\n\nUntuk mengubah, gunakan "Edit rekap" pada sesi terkait, atau ulangi lalu pilih OK untuk menimpa.');
+          return;
+        }
+      }
+    }
     const totalSesi = scansInWeek.length + newManualScans.length;
-    if(!totalSesi){ alert('Tidak ada jadwal mata kuliah untuk minggu ini (atau semuanya belum jatuh tempo). Atur "Hari" mata kuliah di tab Mata Kuliah dulu.'); return; }
+    if(!totalSesi){ alert('Tidak ada jadwal mata kuliah untuk minggu ini (atau semuanya belum jatuh tempo). Atur \"Hari\" mata kuliah di tab Mata Kuliah dulu.'); return; }
 
-    const ok = confirm(`Tandai HADIR untuk SEMUA ${state.students.length} mahasiswa, di ${totalSesi} sesi (mata kuliah) minggu ${week} ini?${newManualScans.length ? `\n\n${newManualScans.length} sesi dibuat otomatis dari jadwal (tanpa upload dokumen scan).` : ''}\n\nKalau ada mahasiswa yang sebenarnya izin/sakit/alpa di minggu ini, buka "Edit rekap" pada sesi terkait sesudahnya untuk mengoreksi baris mahasiswa itu saja.`);
+    const catatanDirekap = sudahDirekapList.length
+      ? (timpaDirekap ? `\n\n⚠️ ${sudahDirekapList.length} sesi yang SUDAH direkap akan DITIMPA jadi Hadir semua (bisa diurungkan).` : `\n\n${sudahDirekapList.length} sesi yang sudah direkap DILEWATI (tidak ditimpa).`)
+      : '';
+    const ok = confirm(`Tandai HADIR untuk SEMUA ${state.students.length} mahasiswa, di ${totalSesi} sesi (mata kuliah) minggu ${week} ini?${newManualScans.length ? `\n\n${newManualScans.length} sesi dibuat otomatis dari jadwal (tanpa upload dokumen scan).` : ''}${catatanDirekap}\n\nKalau ada mahasiswa yang sebenarnya izin/sakit/alpa di minggu ini, buka \"Edit rekap\" pada sesi terkait sesudahnya untuk mengoreksi baris mahasiswa itu saja.`);
     if(!ok) return;
 
     // Masukkan sesi manual baru ke state (belum ada rekapnya, jadi snapshot undo = null)

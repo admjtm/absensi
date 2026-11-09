@@ -2743,6 +2743,8 @@ let state = {
   libur: [],   // {id, matkulId, matkulNama, tanggal, keterangan, markedAt} -- sesi yang ditandai
                // TIDAK ADA KULIAH (mis. dosen tidak masuk) sehingga dikecualikan dari Alpa otomatis
   loading: true,
+  rekapDraft: null, // { id, touched:{studentId:{code,jam}} } -- pilihan H/S/I/A yang sudah diklik di modal rekap tapi belum disimpan,
+                    // supaya tidak hilang kalau tampilan di-render ulang (mis. data terbaru dari server baru tiba).
   loadSeq: 0, // nomor urut pemuatan kelas -- tiap loadClass() baru menaikkannya; pemuatan lama yang sudah
               // tertinggal (pengguna keburu pindah kelas) otomatis berhenti & tidak boleh menimpa tampilan.
   refreshing: false, // true = data cache lokal sudah tampil, tapi versi TERBARU dari server masih
@@ -5588,13 +5590,40 @@ function attachImgZoomHandlers(root, uid){
     img.addEventListener('dblclick', ()=> setZoom((imgZoomLevels[uid]||1)>1 ? 1 : 2));
   }
 }
+function rekapModalSig_(sc){
+  const mk = state.matkul.find(m=>m.id===sc.matkulId) || state.matkul.find(m=>scanMatchesMatkul_(sc, m));
+  return JSON.stringify([sc.id, mk?(mk.jam||1):1, sc.dataUrl?String(sc.dataUrl).length:0,
+    state.students.map(s=>s.id), state.rekap[sc.id]||{}, sc.matkulNama, sc.tanggal]);
+}
 function renderModal(){
   let existing = document.getElementById('modalRoot');
+  let keepScroll = null;
+  if(state.modal && state.modal.type==='rekap'){
+    const scX = state.scans.find(s=>s.id===state.modal.id);
+    if(scX){
+      // PERBAIKAN "PILIHAN SAKIT/IZIN/ALPA HILANG SENDIRI": render() dipanggil lagi saat data terbaru
+      // dari server selesai dimuat, dan dulu itu MEMBANGUN ULANG modal rekap sehingga semua klik
+      // yang belum disimpan kembali ke nilai awal. Sekarang: kalau isi modal tidak berubah, modal
+      // yang sedang terbuka dibiarkan apa adanya (tidak disentuh sama sekali, zoom foto & scroll
+      // juga aman); kalau isinya memang berubah, modal dibangun ulang TAPI pilihan yang sudah
+      // diklik pengguna dipulihkan lewat state.rekapDraft.
+      if(existing && existing.dataset.modalType==='rekap' && existing.dataset.sig===rekapModalSig_(scX)) return;
+      if(existing && existing.dataset.modalType==='rekap' && existing.dataset.scanId===scX.id){
+        const ts = existing.querySelector('.excel-table-scroll');
+        const mb = existing.querySelector('.modal-body');
+        keepScroll = { ts: ts?ts.scrollTop:0, mb: mb?mb.scrollTop:0 };
+      }
+      if(!state.rekapDraft || state.rekapDraft.id!==scX.id) state.rekapDraft = { id:scX.id, touched:{} };
+    }
+  } else {
+    state.rekapDraft = null; // modal rekap ditutup/diganti -> buang draft
+  }
   if(existing) existing.remove();
   if(!state.modal) return;
 
   const root = document.createElement('div');
   root.id = 'modalRoot';
+  root.dataset.modalType = state.modal.type;
   document.body.appendChild(root);
 
   if(state.modal.type==='image'){
@@ -5697,6 +5726,8 @@ function renderModal(){
   if(state.modal.type==='rekap'){
     const sc = state.scans.find(s=>s.id===state.modal.id);
     if(!sc){ state.modal=null; return; }
+    root.dataset.scanId = sc.id;
+    root.dataset.sig = rekapModalSig_(sc);
     const existingRekap = state.rekap[sc.id] || {};
     // Jam per pertemuan utk mata kuliah sesi ini -- dipakai supaya kolom "Jam Manual"
     // tahu batas maksimal jam yg bisa diisi (mis. 4 jam), dan sisanya otomatis Alpa.
@@ -5792,15 +5823,37 @@ function renderModal(){
     }
   }
   const rekapForm = document.getElementById('rekapForm');
+  if(keepScroll){
+    const ts2 = root.querySelector('.excel-table-scroll'); const mb2 = root.querySelector('.modal-body');
+    if(ts2) ts2.scrollTop = keepScroll.ts; if(mb2) mb2.scrollTop = keepScroll.mb;
+  }
   if(rekapForm){
     // Tombol "Tandai semua" (Hadir/Sakit/Izin/Alpa Semua) -- set SEMUA radio status di form
     // ini sekaligus ke satu nilai yang sama, supaya admin tidak perlu klik radio mahasiswa
     // satu-per-satu kalau memang kelasnya kompak (mis. hadir semua). Baris yang perlu beda
     // (mis. 1 mahasiswa izin) masih bisa diklik ulang manual sesudahnya sebelum "Simpan Rekap".
+    // Pulihkan pilihan yang sudah diklik pengguna (belum disimpan) di atas nilai dasar dari data.
+    const _draft = (state.rekapDraft && state.rekapDraft.id===state.modal.id) ? state.rekapDraft.touched : {};
+    Object.keys(_draft).forEach(stId=>{
+      const d = _draft[stId]; if(!d) return;
+      if(d.code){ const rd = rekapForm.querySelector(`input[name="st_${stId}"][value="${d.code}"]`); if(rd) rd.checked = true; }
+      if(d.jam !== undefined){ const ji = rekapForm.querySelector(`[data-student-jam="${stId}"]`); if(ji) ji.value = d.jam; }
+    });
+    // Catat setiap klik/ketikan ke draft.
+    const _rec = (e)=>{
+      const t = e.target; if(!t || !state.rekapDraft) return;
+      let stId = null, patch = null;
+      if(t.type==='radio' && /^st_/.test(t.name||'')){ stId = t.name.slice(3); patch = { code:t.value }; }
+      else if(t.hasAttribute && t.hasAttribute('data-student-jam')){ stId = t.getAttribute('data-student-jam'); patch = { jam:t.value }; }
+      if(stId) state.rekapDraft.touched[stId] = Object.assign(state.rekapDraft.touched[stId]||{}, patch);
+    };
+    rekapForm.addEventListener('change', _rec);
+    rekapForm.addEventListener('input', _rec);
     rekapForm.querySelectorAll('[data-mark-all]').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         const val = btn.dataset.markAll;
         state.students.forEach(st=>{
+          if(state.rekapDraft) state.rekapDraft.touched[st.id] = { code:val, jam:'' };
           const radio = rekapForm.querySelector(`input[name="st_${st.id}"][value="${val}"]`);
           if(radio) radio.checked = true;
           // "Tandai semua" berarti status utuh utk SELURUH jam sesi -- kosongkan Jam Manual

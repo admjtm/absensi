@@ -338,6 +338,13 @@
     .field-row > .field{flex:1 1 100%; width:100%;}
     .field-row > .field input,.field-row > .field select{width:100%; min-width:0; box-sizing:border-box;}
     .field-row > .btn{align-self:flex-start;}
+    /* iOS Safari: input tanggal punya lebar bawaan sendiri, paksa sejajar dengan kotak lain */
+    .field input[type="date"]{
+      -webkit-appearance:none; appearance:none; display:block;
+      width:100%; max-width:100%; min-width:0; box-sizing:border-box;
+      min-height:38px; text-align:left;
+    }
+    .field input[type="date"]::-webkit-date-and-time-value{text-align:left; margin:0;}
   }
 
   /* ---------- Chips list (matkul) ---------- */

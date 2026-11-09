@@ -2821,6 +2821,9 @@ function saveCachedClass(base){
 // jadi untuk cache basi tampilkan "Memuat data kelas..." dulu sampai data terbaru datang
 // (cache lama tetap dipakai sebagai cadangan kalau pengambilan dari server gagal).
 const CACHE_FRESH_MS = 30*60*1000;
+window.__reloadClass_ = ()=>{ loadClass(); };
+const APP_BUILD_ = 'build 2026-11-09 e';
+document.addEventListener('DOMContentLoaded', ()=>{ const d=document.createElement('div'); d.textContent=APP_BUILD_; d.style.cssText='position:fixed;right:6px;bottom:4px;font:10px monospace;opacity:.45;z-index:5;pointer-events:none;'; document.body.appendChild(d); });
 function clearClassState_(){
   // Kosongkan data kelas yang sedang tampil supaya data kelas SEBELUMNYA (mis. 1A) tidak pernah
   // ikut terlihat/terbawa saat kelas baru (mis. 1B) masih dimuat.
@@ -3450,7 +3453,24 @@ async function _enrichClassData_(base, parsed){
     }
     const scanIds = scansP.value.map(sc=> sc && sc.id).filter(Boolean);
     const cachedRekap = ((loadCachedClass(base)||{}).rekap) || {};
-    const legacy = parsed[3] || { found:false, value:null, error:false };
+    let legacy = parsed[3] || { found:false, value:null, error:false };
+    // AKAR MASALAH SISTEMATIS "SEMUA SESI TIDAK SINKRON SEKALIGUS": rekap lama disimpan di key
+    // 'rekap:<kelas>' (dan dipecah ke ~0, ~1, ... kalau besar). Kalau membaca key itu / salah satu
+    // pecahannya GAGAL sesaat, legacy.error = true, tapi dulu error itu DIABAIKAN di bawah: rekap
+    // yang hanya ada di key tsb dianggap kosong, SEMUA sesi lama jadi "tidak sinkron", dan hasilnya
+    // malah ikut disimpan ke cache. Sekarang pembacaan key itu dicoba ulang sampai 3x, dan kalau
+    // tetap gagal data ditandai `incomplete` (tidak divonis, tidak di-cache, dimuat ulang otomatis).
+    for(let a=0; legacy.error && a<3; a++){
+      await new Promise(r=> setTimeout(r, 700*(a+1)));
+      const r1 = await _safeGetRawPlain_(keys[3]);
+      if(r1.error){ legacy = { found:false, value:null, error:true }; continue; }
+      if(r1.found && r1.value && r1.value.__rekapShards){
+        const rr = await _resolveRekapShards_(keys[3], r1.value);
+        legacy = rr.ok ? { found:true, value:rr.value, error:false } : { found:false, value:null, error:true };
+      } else {
+        legacy = r1.found ? { found:true, value:r1.value, error:false } : { found:false, value:null, error:false };
+      }
+    }
     const { out, failed } = scanIds.length ? await fetchRekapSessions_(base, scanIds) : { out:{}, failed:[] };
     const merged = legacy.error ? { ...cachedRekap } : { ...(legacy.value || {}) };
     failed.forEach(id=>{ if(cachedRekap[id]) merged[id] = cachedRekap[id]; });
@@ -3479,7 +3499,7 @@ async function _enrichClassData_(base, parsed){
     }
     stillMissing = stillMissing.filter(id=> _kosong(id));
     stillMissing.forEach(id=>{ if(cachedRekap[id] && Object.keys(cachedRekap[id]).length) merged[id] = cachedRekap[id]; });
-    const incomplete = failed.length > 0 || stillMissing.length > 0;
+    const incomplete = failed.length > 0 || stillMissing.length > 0 || !!legacy.error;
     parsed[3] = { found:true, value:merged, error:false, incomplete };
     scansP.value.forEach(sc=>{
       if(sc && !sc.direkap && merged[sc.id] && Object.keys(merged[sc.id]).length) sc.direkap = true;
@@ -5060,6 +5080,7 @@ function renderRekap(){
   ${orphanCount ? `<div class="note" style="border-left:3px solid var(--danger); background:#FDEEEC; margin-bottom:16px; padding:12px 14px;">
     <strong>&#9888; ${orphanCount} sesi sudah ditandai "Sudah direkap" tapi datanya tidak nyambung ke daftar mahasiswa sekarang</strong> -- biasanya karena daftar mahasiswa sempat diedit/diimpor ulang setelah sesi itu direkap. Sesi ini tetap dihitung Alpa penuh di tabel di bawah walau labelnya "Sudah". Cari kartu/baris berlabel <strong>"TIDAK SINKRON"</strong> di bawah, lalu klik "Edit rekap" dan isi ulang statusnya.
     <br><span style="font-size:12px;">Diagnosis: ${orphanHilang} sesi isi rekapnya tidak ada di data (gagal tersimpan), ${orphanId} sesi id mahasiswanya tidak cocok.</span>
+    ${orphanHilang>0 ? `<br><button class="btn btn-sm" style="margin-top:8px;" onclick="window.__reloadClass_()">&#8635; Muat ulang data kelas ini dari server</button> <span style="font-size:12px;">(coba dulu sebelum mengisi ulang rekap &mdash; biasanya cuma gangguan sesaat)</span>` : ''}
   </div>` : ''}`;
 
   const sortedAll = [...state.scans].sort((a,b)=> b.tanggal.localeCompare(a.tanggal));

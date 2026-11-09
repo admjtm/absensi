@@ -330,6 +330,15 @@
     background:var(--paper); min-width:160px;
   }
   .field input:focus,.field select:focus{outline:2px solid var(--primary-light); outline-offset:1px; border-color:var(--primary-light);}
+  /* Dropdown/input tidak boleh melebihi lebar layar (nama matkul panjang membuat kotak melebar ke kiri/kanan) */
+  .field{min-width:0; max-width:100%;}
+  .field select{max-width:100%; text-overflow:ellipsis; white-space:nowrap; overflow:hidden; padding-right:28px;}
+  .field input[type="file"]{max-width:100%;}
+  @media (max-width:640px){
+    .field-row > .field{flex:1 1 100%; width:100%;}
+    .field-row > .field input,.field-row > .field select{width:100%; min-width:0; box-sizing:border-box;}
+    .field-row > .btn{align-self:flex-start;}
+  }
 
   /* ---------- Chips list (matkul) ---------- */
   .chip-list{display:flex; flex-wrap:wrap; gap:8px; margin-top:14px;}

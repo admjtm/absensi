@@ -2827,14 +2827,19 @@ function clearClassState_(){
   state.students = []; state.matkul = []; state.scans = []; state.rekap = {}; state.libur = [];
   state.semesterStart = DEFAULT_SEMESTER_START;
 }
-async function loadClass(){
+async function loadClass(isAutoRetry){
   const base = keyBase();
   const mySeq = ++state.loadSeq;
+  if(isAutoRetry !== true) state.autoRetryCount = 0; // dibuka/ganti kelas oleh pengguna -> hitung ulang dari 0
   const superseded = ()=> mySeq !== state.loadSeq || base !== keyBase();
   const fetchStartedAt = Date.now(); // dicatat SEBELUM request ke server -- lihat pemakaiannya di bawah
   state.lastBulkHadir = null; // snapshot "Tandai Hadir Semua" cuma berlaku untuk kelas yang sama, buang saat pindah/buka kelas
   const cached = loadCachedClass(base);
   const cacheFresh = !!(cached && cached.savedAt && (Date.now()-cached.savedAt) < CACHE_FRESH_MS);
+  if(isAutoRetry === true){
+    // Muat ulang otomatis karena data tadi belum lengkap: tampilan yang ada dibiarkan (tidak dikosongkan).
+    state.loading = false; state.refreshing = true;
+  } else {
   clearClassState_();
   if(cached && cacheFresh){
     state.students = cached.students || [];
@@ -2849,6 +2854,7 @@ async function loadClass(){
   } else {
     state.loading = true;
     state.refreshing = false;
+  }
   }
   render();
   const [rosterRes, matkulRes, scansRes, rekapRes, semStartRes, liburRes] = await batchGetClassData_(base);
@@ -3063,8 +3069,18 @@ async function loadClass(){
 
   if(superseded()) return; // jangan sentuh tampilan/cache kalau sudah pindah kelas
   state.loading = false;
+  if(rekapRes && rekapRes.incomplete && (state.autoRetryCount||0) < 3){
+    // Sebagian rekap belum berhasil diambil dari server (biasanya gangguan sesaat). JANGAN dulu
+    // dianggap "tidak sinkron" dan JANGAN disimpan ke cache: tetap berstatus "menyegarkan" lalu
+    // ambil ulang otomatis beberapa detik lagi.
+    state.autoRetryCount = (state.autoRetryCount||0) + 1;
+    state.refreshing = true;
+    render();
+    setTimeout(()=>{ if(mySeq === state.loadSeq) loadClass(true); }, 2000 * state.autoRetryCount);
+    return;
+  }
   state.refreshing = false; // data terbaru (atau setidaknya percobaan mengambilnya) sudah selesai diproses
-  saveCachedClass(base);
+  if(!(rekapRes && rekapRes.incomplete)) saveCachedClass(base); // jangan timpa cache yang baik dengan data separuh
   render();
   schedulePrefetchSiblings_(mySeq);
 }
@@ -3097,7 +3113,7 @@ async function prefetchSiblings_(seq){
       const [roster, matkul, scans, rekap, semStart, libur] = r;
       // Hanya simpan kalau data intinya berhasil diambil utuh -- kalau ada yang gagal, biarkan
       // cache lama apa adanya (jangan ditimpa data separuh).
-      if(!roster.found || roster.error || scans.error || rekap.error || matkul.error || !Array.isArray(scans.value)) continue;
+      if(!roster.found || roster.error || scans.error || rekap.error || rekap.incomplete || matkul.error || !Array.isArray(scans.value)) continue;
       try{
         localStorage.setItem(CLASS_CACHE_PREFIX+base, JSON.stringify({
           students: roster.value || [], matkul: matkul.value || (c&&c.matkul) || [], scans: scans.value || [],
@@ -3346,23 +3362,52 @@ async function safeSaveRekapSessions_(applyFn){
   return await flushRekapOutbox_(base, Array.from(touched).filter(id=> typeof id==='string'));
 }
 async function fetchRekapSessions_(base, ids){
+  // PERBAIKAN "SEMUA SESI TIBA-TIBA TIDAK SINKRON": dulu satu permintaan yang gagal/ditolak
+  // Apps Script (terlalu banyak permintaan bersamaan, URL kepanjangan, timeout) dianggap
+  // "rekap sesi itu memang kosong" -> sesi tampil "Sudah direkap, TIDAK SINKRON" padahal datanya
+  // aman di server. Sekarang: permintaan dipecah menurut PANJANG URL, dibatasi 3 sekaligus,
+  // dan tiap kunci yang gagal dicoba ulang sampai 3x. Yang tetap gagal dilaporkan lewat `failed`.
   const out = {}, failed = [];
-  const chunks = []; for(let i=0;i<ids.length;i+=40) chunks.push(ids.slice(i,i+40));
-  await Promise.all(chunks.map(async ch=>{
-    const keys = ch.map(id=> _rekapSesKey_(base,id));
-    try{
-      const res = await fetch(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')), { cache:'no-store' });
-      const r = await res.json();
-      if(!r || !r.values) throw new Error('backend tidak mendukung ?keys=');
-      ch.forEach((id,i)=>{
-        const e = r.values[keys[i]];
-        if(e && e.found && e.value){ try{ out[id] = JSON.parse(e.value); }catch(x){ failed.push(id); } }
-      });
-    }catch(e){
-      // cara lama: satu per satu
-      const singles = await Promise.all(ch.map(id=> _safeGetRawPlain_(_rekapSesKey_(base,id))));
-      singles.forEach((r,i)=>{ if(r.error) failed.push(ch[i]); else if(r.found && r.value) out[ch[i]] = r.value; });
+  const chunks = []; let cur = [], len = 0;
+  ids.forEach(id=>{
+    const l = encodeURIComponent(_rekapSesKey_(base,id)).length + 3;
+    if(cur.length && (len + l > 1500 || cur.length >= 20)){ chunks.push(cur); cur = []; len = 0; }
+    cur.push(id); len += l;
+  });
+  if(cur.length) chunks.push(cur);
+  const sleep = ms=> new Promise(r=> setTimeout(r, ms));
+  async function doChunk(ch){
+    let pending = ch.slice();
+    for(let attempt=0; attempt<3 && pending.length; attempt++){
+      if(attempt) await sleep(600*attempt);
+      const keys = pending.map(id=> _rekapSesKey_(base,id));
+      const next = [];
+      try{
+        const res = await fetch(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')), { cache:'no-store' });
+        const r = await res.json();
+        if(!r || !r.values) throw new Error('backend tidak mendukung ?keys=');
+        pending.forEach((id,i)=>{
+          const e = r.values[keys[i]];
+          if(!e || e.error){ next.push(id); return; }
+          if(e.found && e.value){
+            try{ out[id] = (typeof e.value==='string') ? JSON.parse(e.value) : e.value; }catch(x){ next.push(id); }
+          }
+        });
+      }catch(err){
+        // cara lama: satu per satu, tapi dibatasi 4 sekaligus supaya server tidak kewalahan
+        for(let i=0;i<pending.length;i+=4){
+          const part = pending.slice(i,i+4);
+          const singles = await Promise.all(part.map(id=> _safeGetRawPlain_(_rekapSesKey_(base,id))));
+          singles.forEach((r,j)=>{ if(r.error) next.push(part[j]); else if(r.found && r.value) out[part[j]] = r.value; });
+        }
+      }
+      pending = next;
     }
+    pending.forEach(id=> failed.push(id));
+  }
+  const queue = chunks.slice();
+  await Promise.all(Array.from({length: Math.min(3, queue.length)}, async ()=>{
+    while(queue.length) await doChunk(queue.shift());
   }));
   return { out, failed };
 }
@@ -3416,7 +3461,26 @@ async function _enrichClassData_(base, parsed){
     });
     const box = _outboxGet_(base);
     Object.keys(box).forEach(id=>{ const e = box[id]; if(!e) return; if(e.data) merged[id] = e.data; else delete merged[id]; });
-    parsed[3] = { found:true, value:merged, error:false };
+    // Sesi yang SUDAH ditandai direkap (flag di daftar scan) tapi isi rekapnya belum ketemu:
+    // coba ambil sekali lagi satu per satu. Kalau tetap tidak ada, tandai data "belum lengkap"
+    // supaya loadClass() mencoba lagi otomatis & TIDAK menyimpan hasil separuh ini ke cache.
+    const _kosong = id=> !merged[id] || !Object.keys(merged[id]).length;
+    let stillMissing = scansP.value.filter(sc=> sc && sc.id && sc.direkap && _kosong(sc.id) && !(box[sc.id] && !box[sc.id].data)).map(sc=>sc.id);
+    for(let i=0;i<stillMissing.length;i+=4){
+      const part = stillMissing.slice(i,i+4);
+      const singles = await Promise.all(part.map(id=> _safeGetRawPlain_(_rekapSesKey_(base,id))));
+      singles.forEach((r,j)=>{
+        if(r.error || !(r.found && r.value)) return;
+        const pl = r.value;
+        if(pl && pl.deleted) return;
+        const dat = (pl && pl.data) ? pl.data : null;
+        if(dat) merged[part[j]] = dat;
+      });
+    }
+    stillMissing = stillMissing.filter(id=> _kosong(id));
+    stillMissing.forEach(id=>{ if(cachedRekap[id] && Object.keys(cachedRekap[id]).length) merged[id] = cachedRekap[id]; });
+    const incomplete = failed.length > 0 || stillMissing.length > 0;
+    parsed[3] = { found:true, value:merged, error:false, incomplete };
     scansP.value.forEach(sc=>{
       if(sc && !sc.direkap && merged[sc.id] && Object.keys(merged[sc.id]).length) sc.direkap = true;
     });
@@ -3864,7 +3928,7 @@ function render(){
     ${state.refreshing ? `
       <div class="panel" style="padding:10px 16px; margin-bottom:14px; display:flex; align-items:center; gap:10px; border-left:3px solid var(--accent);">
         <span class="mono" style="font-size:16px; line-height:1;">&#8635;</span>
-        <span style="font-size:12.5px; color:var(--ink-soft);">Menyegarkan data terbaru dari server&hellip; status kehadiran/rekap di bawah ini bisa berubah sebentar lagi kalau ada rekapan yang baru masuk dari perangkat lain.</span>
+        <span style="font-size:12.5px; color:var(--ink-soft);">${(state.autoRetryCount||0)>0 ? 'Sebagian data rekap belum berhasil dimuat dari server &mdash; mencoba lagi otomatis&hellip; tabel di bawah ini belum final, jangan dijadikan acuan dulu.' : 'Menyegarkan data terbaru dari server&hellip; status kehadiran/rekap di bawah ini bisa berubah sebentar lagi kalau ada rekapan yang baru masuk dari perangkat lain.'}</span>
       </div>` : ''}
     ${(state.loading && state.tab!=='sp') ? '<div class="panel"><div class="empty-state"><div class="glyph">&#9203;</div><p>Memuat data kelas&hellip;</p></div></div>' : renderTabContent()}
   `;

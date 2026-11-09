@@ -2818,7 +2818,7 @@ function saveCachedClass(base){
 // dan itulah yang bikin mahasiswa melihat data "tidak sinkron" saat pertama membuka kelas --
 // jadi untuk cache basi tampilkan "Memuat data kelas..." dulu sampai data terbaru datang
 // (cache lama tetap dipakai sebagai cadangan kalau pengambilan dari server gagal).
-const CACHE_FRESH_MS = 90*1000;
+const CACHE_FRESH_MS = 30*60*1000;
 function clearClassState_(){
   // Kosongkan data kelas yang sedang tampil supaya data kelas SEBELUMNYA (mis. 1A) tidak pernah
   // ikut terlihat/terbawa saat kelas baru (mis. 1B) masih dimuat.
@@ -3064,6 +3064,48 @@ async function loadClass(){
   state.refreshing = false; // data terbaru (atau setidaknya percobaan mengambilnya) sudah selesai diproses
   saveCachedClass(base);
   render();
+  schedulePrefetchSiblings_(mySeq);
+}
+
+// ===== PRAMUAT KELAS LAIN DI BELAKANG LAYAR =====
+// Setelah kelas yang dibuka selesai dimuat, kelas-kelas lain di prodi yang sama diambil satu per
+// satu (urut, bukan sekaligus, supaya Apps Script tidak kewalahan) lalu disimpan ke cache lokal.
+// Hasilnya, waktu pengguna pindah kelas, datanya sudah ada dan langsung tampil. Pramuat TIDAK
+// menyentuh tampilan/state sama sekali (hanya menulis cache kelas LAIN) dan langsung berhenti
+// kalau pengguna pindah kelas (pemuatan sungguhan didahulukan).
+const PREFETCH_MIN_AGE_MS = 3*60*1000; // kelas yang cache-nya lebih baru dari ini tidak diambil ulang
+let _prefetchRunning_ = false;
+function schedulePrefetchSiblings_(seq){
+  if(_prefetchRunning_) return;
+  setTimeout(()=>{ prefetchSiblings_(seq); }, 800);
+}
+async function prefetchSiblings_(seq){
+  if(_prefetchRunning_ || seq !== state.loadSeq) return;
+  _prefetchRunning_ = true;
+  try{
+    const prodiKey = state.prodi;
+    const list = (currentProdi().kelas || []).filter(k=> k !== state.kelas);
+    for(const k of list){
+      if(seq !== state.loadSeq || state.prodi !== prodiKey || document.hidden || navigator.onLine===false) break;
+      const base = prodiKey+':'+k;
+      const c = loadCachedClass(base);
+      if(c && c.savedAt && (Date.now()-c.savedAt) < PREFETCH_MIN_AGE_MS) continue;
+      const r = await batchGetClassData_(base);
+      if(seq !== state.loadSeq) break; // pengguna pindah kelas -- buang, jangan rebut bandwidth
+      const [roster, matkul, scans, rekap, semStart, libur] = r;
+      // Hanya simpan kalau data intinya berhasil diambil utuh -- kalau ada yang gagal, biarkan
+      // cache lama apa adanya (jangan ditimpa data separuh).
+      if(!roster.found || roster.error || scans.error || rekap.error || matkul.error || !Array.isArray(scans.value)) continue;
+      try{
+        localStorage.setItem(CLASS_CACHE_PREFIX+base, JSON.stringify({
+          students: roster.value || [], matkul: matkul.value || (c&&c.matkul) || [], scans: scans.value || [],
+          rekap: rekap.value || {}, semesterStart: semStart.value || (c&&c.semesterStart) || DEFAULT_SEMESTER_START,
+          libur: libur.error ? ((c&&c.libur)||[]) : (libur.value || []), savedAt: Date.now(),
+        }));
+      }catch(e){ break; /* localStorage penuh -- berhenti */ }
+    }
+  }catch(e){ console.error('Pramuat kelas lain gagal (diabaikan):', e); }
+  finally{ _prefetchRunning_ = false; }
 }
 // Mengambil roster+matkul+scans+rekap+semesterStart+libur untuk 1 kelas dalam SATU kali
 // request ke Apps Script (?keys=k1,k2,k3,...), jauh lebih cepat daripada request terpisah --
@@ -3303,7 +3345,7 @@ async function safeSaveRekapSessions_(applyFn){
 }
 async function fetchRekapSessions_(base, ids){
   const out = {}, failed = [];
-  const chunks = []; for(let i=0;i<ids.length;i+=15) chunks.push(ids.slice(i,i+15));
+  const chunks = []; for(let i=0;i<ids.length;i+=40) chunks.push(ids.slice(i,i+40));
   await Promise.all(chunks.map(async ch=>{
     const keys = ch.map(id=> _rekapSesKey_(base,id));
     try{

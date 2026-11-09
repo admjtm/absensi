@@ -2743,6 +2743,8 @@ let state = {
   libur: [],   // {id, matkulId, matkulNama, tanggal, keterangan, markedAt} -- sesi yang ditandai
                // TIDAK ADA KULIAH (mis. dosen tidak masuk) sehingga dikecualikan dari Alpa otomatis
   loading: true,
+  loadSeq: 0, // nomor urut pemuatan kelas -- tiap loadClass() baru menaikkannya; pemuatan lama yang sudah
+              // tertinggal (pengguna keburu pindah kelas) otomatis berhenti & tidak boleh menimpa tampilan.
   refreshing: false, // true = data cache lokal sudah tampil, tapi versi TERBARU dari server masih
                       // diambil di belakang layar -- dipakai supaya UI bisa kasih tahu pengguna
                       // kalau status rekap yang tampil sekarang mungkin masih akan diperbarui
@@ -2806,18 +2808,33 @@ function saveCachedClass(base){
     localStorage.setItem(CLASS_CACHE_PREFIX+base, JSON.stringify({
       students: state.students, matkul: state.matkul, scans: state.scans,
       rekap: state.rekap, semesterStart: state.semesterStart, libur: state.libur,
+      savedAt: Date.now(),
     }));
   }catch(e){ /* localStorage penuh/diblokir -- abaikan, tidak fatal */ }
 }
 
+// Cache lokal HANYA ditampilkan langsung kalau masih segar (disimpan < CACHE_FRESH_MS lalu).
+// Cache yang lebih tua dari itu bisa berisi rekap basi (mis. sudah diubah dari perangkat lain),
+// dan itulah yang bikin mahasiswa melihat data "tidak sinkron" saat pertama membuka kelas --
+// jadi untuk cache basi tampilkan "Memuat data kelas..." dulu sampai data terbaru datang
+// (cache lama tetap dipakai sebagai cadangan kalau pengambilan dari server gagal).
+const CACHE_FRESH_MS = 90*1000;
+function clearClassState_(){
+  // Kosongkan data kelas yang sedang tampil supaya data kelas SEBELUMNYA (mis. 1A) tidak pernah
+  // ikut terlihat/terbawa saat kelas baru (mis. 1B) masih dimuat.
+  state.students = []; state.matkul = []; state.scans = []; state.rekap = {}; state.libur = [];
+  state.semesterStart = DEFAULT_SEMESTER_START;
+}
 async function loadClass(){
   const base = keyBase();
+  const mySeq = ++state.loadSeq;
+  const superseded = ()=> mySeq !== state.loadSeq || base !== keyBase();
   const fetchStartedAt = Date.now(); // dicatat SEBELUM request ke server -- lihat pemakaiannya di bawah
   state.lastBulkHadir = null; // snapshot "Tandai Hadir Semua" cuma berlaku untuk kelas yang sama, buang saat pindah/buka kelas
   const cached = loadCachedClass(base);
-  if(cached){
-    // Tampilkan dulu data terakhir yang tersimpan di browser ini supaya kelas langsung
-    // kelihatan isinya (tidak blank/loading), sambil data terbaru diambil di background.
+  const cacheFresh = !!(cached && cached.savedAt && (Date.now()-cached.savedAt) < CACHE_FRESH_MS);
+  clearClassState_();
+  if(cached && cacheFresh){
     state.students = cached.students || [];
     state.matkul = cached.matkul || [];
     normalizeMatkulHari();
@@ -2833,10 +2850,20 @@ async function loadClass(){
   }
   render();
   const [rosterRes, matkulRes, scansRes, rekapRes, semStartRes, liburRes] = await batchGetClassData_(base);
-  if(base !== keyBase()){
+  if(superseded()){
     // Pengguna sudah pindah ke kelas lain sebelum data ini selesai diambil -- buang hasil
     // ini supaya tidak menimpa data kelas yang sedang ditampilkan sekarang.
     return;
+  }
+  // Data server sudah di tangan: kalau tadi cache basi disembunyikan, pakai cache hanya sebagai
+  // cadangan untuk bagian yang GAGAL diambil (lihat cabang error di bawah).
+  if(cached && !cacheFresh){
+    if(rosterRes.error) state.students = cached.students || [];
+    if(matkulRes.error){ state.matkul = cached.matkul || []; normalizeMatkulHari(); }
+    if(scansRes.error) state.scans = cached.scans || [];
+    if(rekapRes.error) state.rekap = cached.rekap || {};
+    if(liburRes.error) state.libur = cached.libur || [];
+    if(semStartRes.error) state.semesterStart = cached.semesterStart || DEFAULT_SEMESTER_START;
   }
 
   // === PERBAIKAN BUG UTAMA (mata kuliah & jadwal "berubah-ubah sendiri") ===
@@ -2871,6 +2898,7 @@ async function loadClass(){
     // first time this class is opened: pre-fill with the official roster provided
     state.students = SEED_STUDENTS[base].map(s=>({id:studentIdFromNim_(s.nim), nama:s.nama, nim:s.nim}));
     await saveStudents();
+    if(superseded()) return;
   } else {
     state.students = [];
   }
@@ -2924,6 +2952,7 @@ async function loadClass(){
       if(deduped.length !== state.matkul.length){
         state.matkul = deduped;
         await saveMatkul();
+        if(superseded()) return;
       }
     }
   } else if(SEED_MATKUL[base]){
@@ -2931,6 +2960,7 @@ async function loadClass(){
     // first time this class is opened: pre-fill with the official matkul list (with jam/pertemuan + hari perkiraan)
     state.matkul = SEED_MATKUL[base].map(m=>({id:uid(), nama:m.nama, jam:m.jam, hari: m.hari ? [m.hari] : []}));
     await saveMatkul();
+    if(superseded()) return;
   } else {
     state.matkul = [];
     normalizeMatkulHari();
@@ -3013,7 +3043,9 @@ async function loadClass(){
       state.rekap = rekapGabungan;
       state.rekapDirtyAt = Date.now();
       await saveScans();
+      if(superseded()) return;
       await saveRekap(Array.from(rekapChangedIds));
+      if(superseded()) return;
     }
   }
 
@@ -3023,9 +3055,11 @@ async function loadClass(){
     // benar-benar belum pernah diatur untuk kelas ini -> pakai default semester berjalan
     state.semesterStart = DEFAULT_SEMESTER_START;
     await saveSemesterStart();
+    if(superseded()) return;
   }
   // kalau semStartRes.error: biarkan nilai yang sudah ada (dari cache di atas) apa adanya.
 
+  if(superseded()) return; // jangan sentuh tampilan/cache kalau sudah pindah kelas
   state.loading = false;
   state.refreshing = false; // data terbaru (atau setidaknya percobaan mengambilnya) sudah selesai diproses
   saveCachedClass(base);

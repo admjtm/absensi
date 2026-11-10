@@ -624,6 +624,22 @@
    'https://script.google.com/macros/s/AKfycbxxxxxxxxxxxxxxxxx/exec'
    Selama URL ini masih placeholder, semua data TIDAK akan tersimpan permanen. */
 const SHEETS_API_URL = 'https://script.google.com/macros/s/AKfycbyVRfjC6WpsieEjMYOfhOZRNmYazPlvyJTbvHwPOqsh39wxc98W7vuttvqGLVFN-0pdQA/exec';
+
+// ===== FETCH DENGAN BATAS WAKTU =====
+// Dulu fetch() ke Google Apps Script TIDAK punya batas waktu. Kalau 1 request macet (server
+// sibuk / jaringan putus-nyambung), ia menggantung berjam-jam, menyumbat antrean simpan, dan
+// status sesi tertahan "sedang direkap". Sekarang tiap request dibatalkan otomatis setelah
+// `ms` milidetik sehingga bisa langsung dicoba ulang.
+function _fetchT_(url, opts, ms){
+  const ctl = (typeof AbortController!=='undefined') ? new AbortController() : null;
+  const t = ctl ? setTimeout(()=>{ try{ ctl.abort(); }catch(e){} }, ms || 20000) : null;
+  const o = Object.assign({}, opts || {});
+  if(ctl) o.signal = ctl.signal;
+  return fetch(url, o).then(
+    r=>{ if(t) clearTimeout(t); return r; },
+    e=>{ if(t) clearTimeout(t); throw (e && e.name==='AbortError') ? new Error('timeout: server terlalu lama membalas') : e; }
+  );
+}
 /* ============================================================================ */
 
 /* MODE DEBUG SEMENTARA: buka situs dengan tambahan ?debugNotif=1 di belakang URL
@@ -3144,7 +3160,7 @@ async function batchGetClassData_(base){
     // rekap, perangkat yang sama (atau tab lain) bisa saja menerima balikan cache lama yang
     // belum ada rekapnya -- inilah salah satu sebab status kehadiran sempat tampil "Alpa semua"
     // padahal sudah direkap, sampai cache browser itu akhirnya kedaluwarsa.
-    const res = await fetch(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')), { cache:'no-store' });
+    const res = await _fetchT_(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')), { cache:'no-store' });
     const r = await res.json();
     if(r && r.values){
       const parse = (k)=>{
@@ -3178,7 +3194,7 @@ async function _safeGetRawPlain_(key){
   try{
     // cache:'no-store' -- lihat catatan di batchGetClassData_ di atas: tanpa ini, hasil GET
     // untuk key yang sama bisa disajikan dari cache browser yang sudah basi.
-    const res = await fetch(SHEETS_API_URL + '?key=' + encodeURIComponent(key), { cache:'no-store' });
+    const res = await _fetchT_(SHEETS_API_URL + '?key=' + encodeURIComponent(key), { cache:'no-store' });
     const r = await res.json();
     if(r && r.found && r.value) return { found:true, value: JSON.parse(r.value), error:false };
     return { found:false, value:null, error:false };
@@ -3301,7 +3317,8 @@ function _updatePendingBanner_(){
 async function _saveRekapSession_(base, id){
   const key = _rekapSesKey_(base, id);
   return _queuedSave(key, async ()=>{
-    const delays = [0, 700, 1800, 4000, 8000];
+    // Jeda antar percobaan dipersingkat (dulu total ~14 detik tunggu sebelum menyerah).
+    const delays = [0, 800, 2000, 4000];
     let lastErr = 'gagal menyimpan';
     for(let a=0; a<delays.length; a++){
       if(delays[a]) await _sleep_(delays[a]);
@@ -3310,17 +3327,32 @@ async function _saveRekapSession_(base, id){
       const payload = { v:1, ts:ent.ts, deleted:!ent.data, data:ent.data || null };
       const w = await _safeSetRaw_(key, payload);
       if(!w.ok){ lastErr = w.error; continue; }
-      const c = await _safeGetRawPlain_(key);
-      if(c.found && c.value && typeof c.value==='object' &&
-         (c.value.ts > ent.ts || (c.value.ts === ent.ts && _stable_(c.value.data) === _stable_(payload.data)))){
-        const box = _outboxGet_(base);
-        if(box[id] && box[id].ts === ent.ts){ delete box[id]; _outboxPersist_(base); }
-        return { ok:true };
-      }
-      lastErr = c.error ? 'gagal membaca ulang untuk verifikasi' : 'data di server belum cocok';
+      // SERVER SUDAH MENERIMA (HTTP 2xx tanpa galat) -> anggap selesai SEKARANG.
+      // Dulu di sini ada 1 request baca-ulang lagi yang MENUNGGU sebelum dinyatakan berhasil
+      // (menggandakan waktu simpan, dan kalau baca-ulang itu lambat/gagal, simpan dianggap gagal
+      // padahal datanya sudah masuk). Verifikasi sekarang dilakukan di latar belakang.
+      const box = _outboxGet_(base);
+      if(box[id] && box[id].ts === ent.ts){ delete box[id]; _outboxPersist_(base); }
+      _verifyRekapLater_(base, id, key, ent, payload);
+      return { ok:true };
     }
     return { ok:false, error:lastErr };
   });
+}
+// Verifikasi di latar belakang (tidak menahan tombol/tampilan). Kalau ternyata isi di server
+// tidak cocok, sesi dimasukkan kembali ke antrean supaya dikirim ulang otomatis.
+function _verifyRekapLater_(base, id, key, ent, payload){
+  setTimeout(async ()=>{
+    try{
+      const c = await _safeGetRawPlain_(key);
+      if(c.error) return; // gagal baca = tidak bisa memvonis, abaikan
+      const ok = c.found && c.value && typeof c.value==='object' &&
+        (c.value.ts > ent.ts || (c.value.ts === ent.ts && _stable_(c.value.data) === _stable_(payload.data)));
+      if(ok) return;
+      const box = _outboxGet_(base);
+      if(!box[id]){ box[id] = { ts: ent.ts, data: ent.data }; _outboxPersist_(base); flushRekapOutbox_(base, [id]); }
+    }catch(e){}
+  }, 4000);
 }
 async function flushRekapOutbox_(base, onlyIds){
   const box = _outboxGet_(base);
@@ -3386,7 +3418,7 @@ async function fetchRekapSessions_(base, ids){
       const keys = pending.map(id=> _rekapSesKey_(base,id));
       const next = [];
       try{
-        const res = await fetch(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')), { cache:'no-store' });
+        const res = await _fetchT_(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')), { cache:'no-store' });
         const r = await res.json();
         if(!r || !r.values) throw new Error('backend tidak mendukung ?keys=');
         pending.forEach((id,i)=>{
@@ -3537,10 +3569,10 @@ async function saveLibur(){ await safeSet('libur:'+keyBase(), state.libur); save
 // mencatat baris ke "Log Scan Absensi" dalam request yang SAMA -- supaya notifikasi Admin tidak
 // bergantung pada request kedua yang terpisah (yang sebelumnya kadang gagal tanpa alasan jelas).
 async function uploadImageToDrive(dataUrl, filename, logInfo){
-  const res = await fetch(SHEETS_API_URL, {
+  const res = await _fetchT_(SHEETS_API_URL, {
     method: 'POST',
     body: JSON.stringify({ action:'uploadImage', dataUrl, filename, log: logInfo || null }),
-  });
+  }, 120000);
   const r = await res.json();
   if(window.__DEBUG_NOTIF__) alert('DEBUG uploadImage response: ' + JSON.stringify(r));
   if(!r || !r.ok || !r.url) throw new Error(r && r.error ? r.error : 'Upload gagal');
@@ -3552,7 +3584,7 @@ async function uploadImageToDrive(dataUrl, filename, logInfo){
 // state internal aplikasi -- kalau logScan gagal, tidak menghentikan proses upload utama.
 async function logScanToSheet(payload){
   try{
-    const res = await fetch(SHEETS_API_URL, {
+    const res = await _fetchT_(SHEETS_API_URL, {
       method: 'POST',
       body: JSON.stringify({ action:'logScan', ...payload }),
     });
@@ -3598,7 +3630,7 @@ async function _safeSetRaw_(key, value){
   try{
     // Body dikirim sebagai string biasa (bukan header application/json) supaya browser
     // tidak melakukan CORS preflight (OPTIONS) yang tidak didukung Google Apps Script.
-    const res = await fetch(SHEETS_API_URL, {
+    const res = await _fetchT_(SHEETS_API_URL, {
       method: 'POST',
       body: JSON.stringify({ key: key, value: JSON.stringify(value) }),
     });
@@ -3822,7 +3854,7 @@ function pruneOldNotifications_(){
 }
 async function loadInitialNotifHistory(){
   try{
-    const res = await fetch(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(adminNotifSince), { cache:'no-store' });
+    const res = await _fetchT_(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(adminNotifSince), { cache:'no-store' });
     if(!res.ok) throw new Error('HTTP ' + res.status + ' dari server');
     const r = await res.json();
     if(window.__DEBUG_NOTIF__) alert('DEBUG loadInitialNotifHistory response: ' + JSON.stringify(r));
@@ -3860,7 +3892,7 @@ async function loadInitialNotifHistory(){
 }
 async function pollAdminNotif(){
   try{
-    const res = await fetch(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(adminNotifSince), { cache:'no-store' });
+    const res = await _fetchT_(SHEETS_API_URL + '?action=recentScans&since=' + encodeURIComponent(adminNotifSince), { cache:'no-store' });
     if(!res.ok) throw new Error('HTTP ' + res.status + ' dari server');
     const r = await res.json();
     if(window.__DEBUG_NOTIF__) alert('DEBUG pollAdminNotif response: ' + JSON.stringify(r));
@@ -5986,16 +6018,14 @@ function renderModal(){
       // dalam fungsi itu (lihat definisinya) -- jadi di sini kita cukup percaya hasil akhirnya,
       // tidak perlu lagi baca-ulang terpisah yang justru rawan salah lapor gagal karena race
       // dengan proses simpan lain di saat bersamaan.
-      const [rekapSaveResult, scansSaveResult] = await Promise.all([
-        safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{ latest[scanId] = result; return latest; }),
-        safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
-          const idx = latest.findIndex(s=>s.id===scanId);
-          if(idx>=0) latest[idx] = {...latest[idx], direkap:true};
-          return latest;
-        }),
-      ]);
+      // Hanya rekap sesi ini yang dikirim (kecil & cepat). Flag "direkap" di daftar scan TIDAK
+      // lagi ditulis ulang di sini: itu menulis SELURUH daftar scan (besar, bisa terpecah beberapa
+      // bagian) + baca-ulang + retry, dan itulah yang membuat simpan terasa sangat lama dan sering
+      // bertabrakan. Status "Sudah direkap" otomatis diturunkan dari isi rekap saat data dimuat
+      // (lihat _enrichClassData_), jadi flag itu memang tidak diperlukan di server.
+      const rekapSaveResult = await safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{ latest[scanId] = result; return latest; });
+      const scansSaveResult = { ok:true };
 
-      if(scansSaveResult && !scansSaveResult.ok) console.warn('[Simpan Rekap] flag direkap di daftar scan belum tersimpan (tidak fatal, status diturunkan dari isi rekap):', scansSaveResult.error);
       const gagalSimpan = !rekapSaveResult || !rekapSaveResult.ok;
       if(gagalSimpan){
         alert(`⏳ Rekap SUDAH tersimpan aman di perangkat ini dan tampil normal, tapi belum terkirim ke server Google Sheets (${(rekapSaveResult && rekapSaveResult.error) || 'sebab tidak diketahui'}).\n\nAplikasi akan MENGIRIM ULANG OTOMATIS setiap beberapa detik sampai berhasil -- tidak perlu isi ulang. Biarkan halaman tetap terbuka sampai label kuning "menunggu terkirim" di pojok kiri bawah hilang.`);

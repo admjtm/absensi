@@ -2441,7 +2441,9 @@ const SEED_STUDENTS = {
     { "nama": "MUHAMAD FAHRI RAMADHAN", "nim": "2611043010" },
     { "nama": "ISMAIL YAHYA", "nim": "2611043013" },
     { "nama": "RAFFA ALFHAREZEL", "nim": "2611043014" },
-    { "nama": "HAYKAL FERNANDES", "nim": "2611043016" }
+    { "nama": "HAYKAL FERNANDES", "nim": "2611043016" },
+    { "nama": "FATIMA MOHAMMADI", "nim": "2611043018" },
+    { "nama": "SAMANA KHAIRKHWA", "nim": "2611043019" }
   ],
   "d4tmpr:1B": [
     { "nama": "MUHAMMAD ROFIIF", "nim": "2511043003" },
@@ -5263,6 +5265,7 @@ function hitungRekapMatkul(matkulId){
   state.students.forEach(st=>{
     let Sjam=0, Ijam=0, Ajam=0;
     dates.forEach(tanggal=>{
+      if(sebelumMulaiMahasiswa_(st.id, tanggal, state.semesterStart)) return; // mahasiswa baru: belum dihitung
       const sc = findScanForSession_(mk, tanggal);
       if(isLiburSesi(matkulId, tanggal) && !sc) return; // Dosen Tidak Masuk & belum ada scan pengganti -> tidak dihitung S/I/A sama sekali (tapi tetap masuk totalPertemuan)
       if(!sc || !sc.direkap){
@@ -6727,6 +6730,19 @@ function missingUploadSessions(){
   missing.sort((a,b)=> a.tanggal.localeCompare(b.tanggal));
   return missing;
 }
+// Mahasiswa baru yang baru masuk di tengah semester: sesi SEBELUM minggu mulainya TIDAK
+// dihitung sama sekali (bukan Alfa) -- perhitungan S/I/A baru dimulai dari minggu tsb.
+// Kunci = id mahasiswa ('stu_' + NIM), nilai = minggu pertama mulai dihitung.
+const MAHASISWA_MULAI_MINGGU_ = {
+  'stu_2611043018': 11, // FATIMA MOHAMMADI  (D4 Teknik Manufaktur 1A)
+  'stu_2611043019': 11, // SAMANA KHAIRKHWA  (D4 Teknik Manufaktur 1A)
+};
+function sebelumMulaiMahasiswa_(studentId, tanggal, semesterStart){
+  const m = MAHASISWA_MULAI_MINGGU_[studentId];
+  if(!m) return false;
+  const w = weekIndexForDate(tanggal, semesterStart);
+  return w!=null && w < m;
+}
 function weekIndexForDate(dateStr, semesterStartStr){
   if(!semesterStartStr) return null;
   const start = getMondayOf(parseISODate(semesterStartStr));
@@ -6817,6 +6833,7 @@ function _rekapObjSinkron_(r){
   return state.students.some(st=> Object.prototype.hasOwnProperty.call(r, st.id));
 }
 function sessionStatusForDate(mk, dateStr, studentId){
+  if(sebelumMulaiMahasiswa_(studentId, dateStr, state.semesterStart)) return {S:0,I:0,A:0}; // mahasiswa baru: belum dihitung
   const jam = mk.jam||1;
   const d = parseISODate(dateStr);
   const dn = dayNameOfDate(d);
@@ -6842,6 +6859,7 @@ function cumulativeSIA(uptoDate, matkulId, studentId){
   if(!mk) return {S,I,A};
   const jam = mk.jam||1;
   allSessionDatesForMatkul(mk, uptoDate).forEach(tanggal=>{
+    if(sebelumMulaiMahasiswa_(studentId, tanggal, state.semesterStart)) return; // mahasiswa baru: belum dihitung
     const sc = findScanForSession_(mk, tanggal);
     if(isLiburSesi(matkulId, tanggal) && !sc) return; // Dosen Tidak Masuk & belum ada scan pengganti -> tidak dihitung S/I/A sama sekali
     if(!sc || !sc.direkap){
@@ -6906,6 +6924,7 @@ function cumulativeAJam_g(uptoDate, classData, studentId){
   classData.matkul.forEach(mk=>{
     const jam = mk.jam||1;
     allSessionDatesForMatkul_g(mk, uptoDate, classData.semesterStart, classData.scans).forEach(tanggal=>{
+      if(sebelumMulaiMahasiswa_(studentId, tanggal, classData.semesterStart)) return; // mahasiswa baru: belum dihitung
       const sc = findScanForSession_g(classData.scans, mk, tanggal);
       if(isLiburSesi_g(classData.libur, mk.id, tanggal) && !sc) return;
       if(!sc || !sc.direkap){ A += jam; return; }

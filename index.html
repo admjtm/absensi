@@ -4519,7 +4519,7 @@ function renderMatkul(){
                 ${!(m.hari&&m.hari.length) ? `<div style="color:var(--ink-soft); font-size:11px; margin-top:6px;">&mdash; Belum diatur &mdash;</div>` : ''}
                 ${(m.hariHistory && m.hariHistory.length>1) ? `
                 <div class="mono" style="font-size:10px; color:var(--ink-soft); margin-top:6px; line-height:1.6;">
-                  ${m.hariHistory.map(h=>`Mulai minggu ${h.mulaiMinggu}: ${(h.hari&&h.hari.length)?h.hari.join(', '):'(tidak ada)'}`).join('<br>')}
+                  ${m.hariHistory.map(h=>`Mulai ${weekName(h.mulaiMinggu).toLowerCase()}: ${(h.hari&&h.hari.length)?h.hari.join(', '):'(tidak ada)'}`).join('<br>')}
                 </div>` : ''}
                 <button type="button" class="btn btn-ghost btn-sm" data-reschedule-matkul="${m.id}" style="margin-top:6px; font-size:11px;">&#128260; Ubah jadwal mulai minggu tertentu</button>
               </td>
@@ -4695,7 +4695,7 @@ function renderUpload(){
     const uploadGridWeekOptions = Array.from({length:TOTAL_WEEKS}, (_,i)=>i+1).map(w=>{
       const mon = weekMondayOf(w, state.semesterStart);
       const sat = addDaysDate(mon,5);
-      return `<option value="${w}" ${w===uploadGridWeek?'selected':''}>Minggu ${w} (${fmtDDMMYYYY(mon)} &ndash; ${fmtDDMMYYYY(sat)})</option>`;
+      return `<option value="${w}" ${w===uploadGridWeek?'selected':''}>${weekName(w)} (${fmtDDMMYYYY(mon)} &ndash; ${fmtDDMMYYYY(sat)})</option>`;
     }).join('');
     uploadGridWeekNavHtml = `
     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:4px 0 4px;">
@@ -4749,7 +4749,7 @@ function renderUpload(){
 }
 
 /* ---- Statistik (ceklis upload & rekap per minggu, semua kelas dalam 1 prodi) ---- */
-const STATISTIK_TOTAL_MINGGU = 18;
+const STATISTIK_TOTAL_MINGGU = 19; // 18 minggu kuliah + 1 minggu PKTOS
 
 // Ambil data (matkul, scans, rekap, libur, semesterStart) utk SEMUA kelas dalam 1 prodi
 // sekaligus -- dipakai khusus tab Statistik, TANPA mengubah state.kelas/state.matkul yang
@@ -4854,7 +4854,7 @@ function renderStatistik(){
     <div class="panel-head">
       <div>
         <h2>Statistik Upload &amp; Rekap &mdash; ${escapeHtml(prodi.nama)}</h2>
-        <p>Ceklis otomatis per kelas &amp; per minggu (Minggu 1&ndash;${STATISTIK_TOTAL_MINGGU}): <strong>U</strong> = scan absensi sudah lengkap diupload, <strong>R</strong> = sudah lengkap direkap Admin. Ganti tab program studi di atas utk melihat prodi lain.</p>
+        <p>Ceklis otomatis per kelas &amp; per minggu (Minggu 1&ndash;${weekLabel(STATISTIK_TOTAL_MINGGU)}, termasuk Minggu PKTOS): <strong>U</strong> = scan absensi sudah lengkap diupload, <strong>R</strong> = sudah lengkap direkap Admin. Ganti tab program studi di atas utk melihat prodi lain.</p>
       </div>
       <button type="button" class="btn btn-ghost btn-sm" id="statistikRefreshBtn" ${state.statistik.loading?'disabled':''}>${state.statistik.loading?'Memuat&hellip;':'\u21bb Muat Ulang'}</button>
     </div>`;
@@ -4874,7 +4874,7 @@ function renderStatistik(){
     return `<div class="panel">${head}<div class="empty-state"><p>Belum ada kelas di program studi ini.</p></div></div>`;
   }
 
-  const weekHeaders = Array.from({length:STATISTIK_TOTAL_MINGGU}, (_,i)=>`<th>Mgg ${i+1}</th>`).join('');
+  const weekHeaders = Array.from({length:STATISTIK_TOTAL_MINGGU}, (_,i)=>`<th>${weekLabel(i+1)==='PKTOS'?'PKTOS':'Mgg '+weekLabel(i+1)}</th>`).join('');
   const rows = state.statistik.data.map(cd=>{
     let cells = '';
     for(let w=1; w<=STATISTIK_TOTAL_MINGGU; w++){
@@ -5044,7 +5044,7 @@ function renderRekapSP(){
     return { kelas: cd.kelas, byWeek };
   });
 
-  const weekHeaderCells = weeks.map(w=>`<th colspan="3">Minggu ${w}</th>`).join('');
+  const weekHeaderCells = weeks.map(w=>`<th colspan="3">${weekName(w)}</th>`).join('');
   const spHeaderCells = weeks.map(()=> SP_THRESHOLDS.map(t=>`<th>${t.label}</th>`).join('')).join('');
 
   const totalPerWeek = {};
@@ -5141,7 +5141,7 @@ function renderRekap(){
     const scanListWeekOptions = Array.from({length:TOTAL_WEEKS}, (_,i)=>i+1).map(w=>{
       const mon = weekMondayOf(w, state.semesterStart);
       const sat = addDaysDate(mon,5);
-      return `<option value="${w}" ${w===scanListWeek?'selected':''}>Minggu ${w} (${fmtDDMMYYYY(mon)} &ndash; ${fmtDDMMYYYY(sat)})</option>`;
+      return `<option value="${w}" ${w===scanListWeek?'selected':''}>${weekName(w)} (${fmtDDMMYYYY(mon)} &ndash; ${fmtDDMMYYYY(sat)})</option>`;
     }).join('');
     weekNavHtml = `
     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0 4px;">
@@ -5310,12 +5310,12 @@ function spKeteranganLengkap(aJam, fw, uptoWeek){
   let teks = base;
   if(level<=3){
     const cur = wk(level);
-    if(cur!=null) teks = base.replace('SP-'+level, 'SP-'+level+' (Minggu '+cur+')');
+    if(cur!=null) teks = base.replace('SP-'+level, 'SP-'+level+' ('+weekName(cur)+')');
   }
   const riwayat = [];
   for(let n=1; n<=Math.min(level-1,3)+(level===4?1:0); n++){
     const w = wk(n);
-    if(w!=null) riwayat.push('SP-'+n+' (Minggu '+w+')');
+    if(w!=null) riwayat.push('SP-'+n+' ('+weekName(w)+')');
   }
   if(riwayat.length) teks += ' | '+(level===4?'Riwayat: ':'Sebelumnya: ')+riwayat.join(', ');
   return teks;
@@ -5460,7 +5460,7 @@ function renderWeeklyRecap(){
   const weekOptions = Array.from({length:TOTAL_WEEKS}, (_,i)=>i+1).map(w=>{
     const mon = weekMondayOf(w, state.semesterStart);
     const sat = addDaysDate(mon,5);
-    return `<option value="${w}" ${w===week?'selected':''}>Minggu ${w} (${fmtDDMMYYYY(mon)} &ndash; ${fmtDDMMYYYY(sat)})</option>`;
+    return `<option value="${w}" ${w===week?'selected':''}>${weekName(w)} (${fmtDDMMYYYY(mon)} &ndash; ${fmtDDMMYYYY(sat)})</option>`;
   }).join('');
 
   // Header hari + matkul (colspan per hari = 3 x jumlah matkul hari itu)
@@ -5576,9 +5576,9 @@ function renderWeeklyRecap(){
     </div>
     ${!adaJadwal ? `<div class="note">Belum ada mata kuliah yang diatur "Hari"-nya di tab "Mata Kuliah" &mdash; kolom per mata kuliah belum bisa ditampilkan.</div>` : ''}
     <div style="margin-bottom:14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-      <button class="btn btn-ghost btn-sm" id="exportWeekExcelBtn" ${!state.students.length ? 'disabled' : ''}>&#8595; Download Excel (Minggu ${week===1?'1':'1&ndash;'+week})</button>
-      <span style="align-self:center; font-size:12.5px; color:var(--ink-soft);">${week===1 ? '' : `File berisi rekap Minggu 1 sampai Minggu ${week} (bertumpuk dalam satu sheet).`}</span>
-      ${state.role==='admin' ? `<button class="btn btn-primary btn-sm" id="bulkMarkWeekHadirBtn" ${!state.students.length ? 'disabled' : ''}>&#10003; Tandai Hadir Semua (Minggu ${week} ini)</button>` : ''}
+      <button class="btn btn-ghost btn-sm" id="exportWeekExcelBtn" ${!state.students.length ? 'disabled' : ''}>&#8595; Download Excel (Minggu ${week===1?'1':'1&ndash;'+weekLabel(week)})</button>
+      <span style="align-self:center; font-size:12.5px; color:var(--ink-soft);">${week===1 ? '' : `File berisi rekap Minggu 1 sampai ${weekName(week)} (bertumpuk dalam satu sheet).`}</span>
+      ${state.role==='admin' ? `<button class="btn btn-primary btn-sm" id="bulkMarkWeekHadirBtn" ${!state.students.length ? 'disabled' : ''}>&#10003; Tandai Hadir Semua (${weekName(week)} ini)</button>` : ''}
       ${state.role==='admin' && state.lastBulkHadir && state.lastBulkHadir.week===week ? `<button class="btn btn-ghost btn-sm" id="undoBulkMarkWeekHadirBtn" style="color:var(--danger); border-color:var(--danger);">&#8617; Urungkan Tandai Hadir Semua</button>` : ''}
       <div style="display:flex; align-items:center; gap:4px; border:1px solid var(--line-strong); border-radius:8px; padding:2px;">
         <button class="btn btn-ghost btn-sm" id="rekapZoomOut" title="Perkecil tampilan tabel" style="padding:4px 10px;">&minus;</button>
@@ -6290,12 +6290,12 @@ function attachHandlers(){
     if(!mk) return;
     ensureHariHistory(mk);
     const curWeek = state.semesterStart ? (weekIndexForDate(todayStr(), state.semesterStart)||1) : 1;
-    const wkStr = prompt('Jadwal baru berlaku MULAI minggu ke berapa?\n(Minggu-minggu SEBELUM itu tetap memakai jadwal lama seperti sekarang, tidak ikut berubah)', String(curWeek||1));
+    const wkStr = prompt('Jadwal baru berlaku MULAI minggu ke berapa? (isi angka, atau PKTOS)\n(Minggu-minggu SEBELUM itu tetap memakai jadwal lama seperti sekarang, tidak ikut berubah)', String(weekLabel(curWeek||1)));
     if(wkStr===null) return;
-    const wk = parseInt(wkStr,10);
+    const wk = weekFromLabel(wkStr);
     if(!wk || wk<1){ alert('Nomor minggu tidak valid.'); return; }
     const hariSaatIni = hariArrayOfAtWeek(mk, wk);
-    const hariStr = prompt('Hari kuliah baru mulai minggu ke-'+wk+' (pisahkan dengan koma).\nPilihan hari: '+HARI_LIST.join(', '), hariSaatIni.join(', '));
+    const hariStr = prompt('Hari kuliah baru mulai '+weekName(wk).toLowerCase()+' (pisahkan dengan koma).\nPilihan hari: '+HARI_LIST.join(', '), hariSaatIni.join(', '));
     if(hariStr===null) return;
     const hariBaru = hariStr.split(',').map(s=>s.trim()).filter(Boolean).filter(h=>HARI_LIST.includes(h));
     if(hariStr.trim() && !hariBaru.length){ alert('Tidak ada nama hari yang dikenali. Gunakan: '+HARI_LIST.join(', ')); return; }
@@ -6314,7 +6314,7 @@ function attachHandlers(){
       if(idx>=0) latest[idx] = {...latest[idx], hari:newHari, hariHistory:newHistory};
       return latest;
     });
-    alert('Tersimpan. Mulai minggu '+wk+', jadwal '+escapeHtml(mk.nama)+': '+(hariBaru.length?hariBaru.join(', '):'(tidak ada hari)')+'. Minggu-minggu sebelum minggu '+wk+' tetap memakai jadwal lama.');
+    alert('Tersimpan. Mulai '+weekName(wk).toLowerCase()+', jadwal '+escapeHtml(mk.nama)+': '+(hariBaru.length?hariBaru.join(', '):'(tidak ada hari)')+'. Minggu-minggu sebelum '+weekName(wk).toLowerCase()+' tetap memakai jadwal lama.');
   }));
   const semesterStartInput = document.getElementById('semesterStartInput');
   if(semesterStartInput) semesterStartInput.addEventListener('change', ()=>{
@@ -6629,7 +6629,22 @@ function attachHandlers(){
 
 /* ---------------- Export Excel (format resmi mingguan) ---------------- */
 const DAYS_ID = ['Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
-const TOTAL_WEEKS = 18;
+// Minggu ke-10 secara urutan kalender (02/11 - 07/11) adalah "Minggu PKTOS" (bukan minggu kuliah).
+// Penomoran INTERNAL (data tersimpan, jadwal, hitungan SP) tetap berurutan 1,2,3,... tanpa lompat;
+// yang diubah hanya LABEL yang tampil: urutan ke-10 = "PKTOS", urutan ke-11 tampil sebagai
+// Minggu 10, ke-12 sebagai Minggu 11, dst.
+const PKTOS_WEEK = 10;
+const TOTAL_WEEKS = 19; // 18 minggu kuliah + 1 minggu PKTOS
+function weekLabel(w){ w=Number(w); return w===PKTOS_WEEK ? 'PKTOS' : (w>PKTOS_WEEK ? w-1 : w); }
+function weekName(w){ return 'Minggu '+weekLabel(w); }
+// kebalikan: label yang diketik user (angka atau "PKTOS") -> nomor internal
+function weekFromLabel(str){
+  const t=String(str||'').trim().toUpperCase();
+  if(t==='PKTOS') return PKTOS_WEEK;
+  const n=parseInt(t,10);
+  if(!n||n<1) return null;
+  return n>=PKTOS_WEEK ? n+1 : n;
+}
 const DEFAULT_SEMESTER_START = '2026-08-31'; // Senin minggu pertama, default semester ini
 
 function parseISODate(s){ return new Date(s+'T00:00:00'); }
@@ -7009,11 +7024,11 @@ async function bulkMarkWeekHadir(week){
     const daftarSudah = sudahDirekapList.map(s=>'• '+(s.matkulNama||'(matkul)')+' - '+formatDate(s.tanggal)).join('\n');
     let timpaDirekap = false;
     if(sudahDirekapList.length){
-      timpaDirekap = confirm('⚠️ '+sudahDirekapList.length+' sesi minggu '+week+' SUDAH direkap:\n\n'+daftarSudah+'\n\nKlik OK  = TIMPA juga sesi yang sudah direkap (semua jadi Hadir).\nKlik Batal = LEWATI sesi yang sudah direkap (rekap lama tetap aman).');
+      timpaDirekap = confirm('⚠️ '+sudahDirekapList.length+' sesi '+weekName(week).toLowerCase()+' SUDAH direkap:\n\n'+daftarSudah+'\n\nKlik OK  = TIMPA juga sesi yang sudah direkap (semua jadi Hadir).\nKlik Batal = LEWATI sesi yang sudah direkap (rekap lama tetap aman).');
       if(!timpaDirekap){
         scansInWeek = scansInWeek.filter(s=>!s.direkap);
         if(!scansInWeek.length && !newManualScans.length){
-          alert('Semua sesi minggu '+week+' sudah direkap dan dilewati. Tidak ada yang ditandai.\n\nUntuk mengubah, gunakan "Edit rekap" pada sesi terkait, atau ulangi lalu pilih OK untuk menimpa.');
+          alert('Semua sesi '+weekName(week).toLowerCase()+' sudah direkap dan dilewati. Tidak ada yang ditandai.\n\nUntuk mengubah, gunakan "Edit rekap" pada sesi terkait, atau ulangi lalu pilih OK untuk menimpa.');
           return;
         }
       }
@@ -7024,7 +7039,7 @@ async function bulkMarkWeekHadir(week){
     const catatanDirekap = sudahDirekapList.length
       ? (timpaDirekap ? `\n\n⚠️ ${sudahDirekapList.length} sesi yang SUDAH direkap akan DITIMPA jadi Hadir semua (bisa diurungkan).` : `\n\n${sudahDirekapList.length} sesi yang sudah direkap DILEWATI (tidak ditimpa).`)
       : '';
-    const ok = confirm(`Tandai HADIR untuk SEMUA ${state.students.length} mahasiswa, di ${totalSesi} sesi (mata kuliah) minggu ${week} ini?${newManualScans.length ? `\n\n${newManualScans.length} sesi dibuat otomatis dari jadwal (tanpa upload dokumen scan).` : ''}${catatanDirekap}\n\nKalau ada mahasiswa yang sebenarnya izin/sakit/alpa di minggu ini, buka \"Edit rekap\" pada sesi terkait sesudahnya untuk mengoreksi baris mahasiswa itu saja.`);
+    const ok = confirm(`Tandai HADIR untuk SEMUA ${state.students.length} mahasiswa, di ${totalSesi} sesi (mata kuliah) ${weekName(week).toLowerCase()} ini?${newManualScans.length ? `\n\n${newManualScans.length} sesi dibuat otomatis dari jadwal (tanpa upload dokumen scan).` : ''}${catatanDirekap}\n\nKalau ada mahasiswa yang sebenarnya izin/sakit/alpa di minggu ini, buka \"Edit rekap\" pada sesi terkait sesudahnya untuk mengoreksi baris mahasiswa itu saja.`);
     if(!ok) return;
 
     // Masukkan sesi manual baru ke state (belum ada rekapnya, jadi snapshot undo = null)
@@ -7084,7 +7099,7 @@ async function bulkMarkWeekHadir(week){
       // safeSaveObject/safeSaveArray sudah otomatis verifikasi baca-ulang & coba-lagi sendiri
       // di dalamnya (lihat catatan di definisinya) -- kalau sampai di sini dengan ok:true,
       // berarti sudah benar-benar terkonfirmasi cocok di server, tidak perlu baca-ulang lagi.
-      alert(`✅ Berhasil DAN sudah terkonfirmasi tersimpan permanen di server: ${scansInWeek.length} sesi minggu ${week} ditandai Hadir untuk ${state.students.length} mahasiswa.\n\nKalau ini salah pencet, klik "Urungkan Tandai Hadir Semua" di sebelah tombol ini.`);
+      alert(`✅ Berhasil DAN sudah terkonfirmasi tersimpan permanen di server: ${scansInWeek.length} sesi ${weekName(week).toLowerCase()} ditandai Hadir untuk ${state.students.length} mahasiswa.\n\nKalau ini salah pencet, klik "Urungkan Tandai Hadir Semua" di sebelah tombol ini.`);
     }
   }catch(err){
     console.error('[bulkMarkWeekHadir] GAGAL:', err);
@@ -7100,7 +7115,7 @@ function undoBulkMarkWeekHadir(){
   try{
     const snap = state.lastBulkHadir;
     if(!snap){ alert('Tidak ada aksi "Tandai Hadir Semua" yang bisa diurungkan.'); return; }
-    const ok = confirm(`Urungkan "Tandai Hadir Semua" untuk minggu ${snap.week} (${snap.scanIds.length} sesi)? Rekap sesi-sesi itu akan dikembalikan seperti sebelum tombol tadi diklik.`);
+    const ok = confirm(`Urungkan "Tandai Hadir Semua" untuk ${weekName(snap.week).toLowerCase()} (${snap.scanIds.length} sesi)? Rekap sesi-sesi itu akan dikembalikan seperti sebelum tombol tadi diklik.`);
     if(!ok) return;
 
     const newRekap = { ...state.rekap };
@@ -7114,7 +7129,7 @@ function undoBulkMarkWeekHadir(){
     const undoneWeek = snap.week;
     state.lastBulkHadir = null; // sekali diurungkan, tidak bisa diurungkan lagi (hindari redo yang membingungkan)
     render();
-    alert(`Berhasil diurungkan: rekap minggu ${undoneWeek} sudah dikembalikan seperti sebelum "Tandai Hadir Semua" tadi.`);
+    alert(`Berhasil diurungkan: rekap ${weekName(undoneWeek).toLowerCase()} sudah dikembalikan seperti sebelum "Tandai Hadir Semua" tadi.`);
 
     safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{
       snap.scanIds.forEach(id=>{
@@ -7207,7 +7222,7 @@ function buildRekapMingguanBlocks_(weekNumbers){
     const rTitle=row, rJurusan=row+1, rProdi=row+2, rKelas=row+3, rHead=row+4, rSub=row+5, rJam=row+6, rSIA=row+7;
 
     setCell(rTitle,colBP,'REKAPITULASI ABSENSI MAHASISWA');
-    setCell(rTitle,colStart,'MINGGU - '+week);
+    setCell(rTitle,colStart,'MINGGU - '+weekLabel(week));
     setCell(rJurusan,colBP,'JURUSAN TEKNIK MESIN');
     setCell(rProdi,colBP,'PROGRAM STUDI '+(currentProdi()?currentProdi().nama.toUpperCase():''));
     setCell(rKelas,6,'KELAS : '+state.kelas);

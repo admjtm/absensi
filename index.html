@@ -2803,7 +2803,7 @@ let state = {
   statistik: { prodiKey:null, loading:false, data:null, error:null }, // cache tab Statistik --
     // { prodiKey: prodi yg terakhir diambil datanya, loading, data: [{kelas,matkul,scans,rekap,
     // libur,semesterStart}, ...] per kelas di prodi itu, error }. Diambil ulang otomatis kalau
-    // admin/ketua pindah tab program studi (lihat renderStatistik).
+    // admin memuat ulang (sekarang berisi SEMUA prodi, lihat startLoadAllProdi_).
   rekapSP: { prodiKey:null, loading:false, data:null, error:null, week:null }, // cache tab Rekap SP --
     // sama strukturnya dengan "statistik" di atas (per kelas: kelas,students,matkul,scans,rekap,
     // libur,semesterStart), ditambah "week" = minggu yang sedang dipilih di dropdown tab ini.
@@ -3977,7 +3977,7 @@ function render(){
   renderNotifBell();
   const app = document.getElementById('app');
   app.innerHTML = `
-    ${state.tab==='sp' ? '' : renderSelector()}
+    ${(state.tab==='sp' || state.tab==='statistik' || state.tab==='rekapsp') ? '' : renderSelector()}
     ${renderTabnav()}
     ${state.refreshing ? `
       <div class="panel" style="padding:10px 16px; margin-bottom:14px; display:flex; align-items:center; gap:10px; border-left:3px solid var(--accent);">
@@ -4751,6 +4751,37 @@ function renderUpload(){
 /* ---- Statistik (ceklis upload & rekap per minggu, semua kelas dalam 1 prodi) ---- */
 const STATISTIK_TOTAL_MINGGU = 19; // 18 minggu kuliah + 1 minggu PKTOS
 
+// Muat SEMUA prodi sekaligus (paralel) untuk tab Statistik & Rekap SP. Hasil masuk bertahap
+// per prodi (cache.data = [{prodi, classes, error?}, ...] urut sesuai PRODI) supaya prodi yang
+// cepat selesai langsung tampil tanpa menunggu yang lain. prodiKey dipakai sebagai penanda
+// "ALL" (sudah/sedang dimuat); tombol Muat Ulang cukup mengosongkannya (null) untuk memuat ulang.
+function startLoadAllProdi_(cache, loader){
+  const runId = (cache.runId || 0) + 1;
+  cache.runId = runId;
+  cache.prodiKey = 'ALL';
+  cache.loading = true;
+  cache.error = null;
+  cache.data = [];
+  let pending = PRODI.length;
+  PRODI.forEach(p=>{
+    loader(p.key)
+      .then(classes=>({ prodi:p, classes }))
+      .catch(e=>({ prodi:p, classes:[], error:(e && e.message) || String(e) }))
+      .then(group=>{
+        if(cache.runId !== runId || !cache.data) return; // sudah di-reset / dimuat ulang
+        cache.data.push(group);
+        cache.data.sort((a,b)=> PRODI.indexOf(a.prodi) - PRODI.indexOf(b.prodi));
+        pending--;
+        if(pending===0) cache.loading = false;
+        render();
+      });
+  });
+}
+
+function prodiGroupHeadingHtml_(prodi, nKelas){
+  return `<h3 class="sp-prodi-title"><span class="code">${escapeHtml(prodi.kode)}</span>${escapeHtml(prodi.nama)} <span style="font-weight:400; font-size:12px; color:var(--ink-soft);">(${nKelas} kelas)</span></h3>`;
+}
+
 // Ambil data (matkul, scans, rekap, libur, semesterStart) utk SEMUA kelas dalam 1 prodi
 // sekaligus -- dipakai khusus tab Statistik, TANPA mengubah state.kelas/state.matkul yang
 // sedang aktif di layar (supaya admin/ketua tidak perlu pindah2 kelas manual satu-per-satu
@@ -4827,77 +4858,71 @@ function renderStatistikCell(st){
 }
 
 function renderStatistik(){
-  const prodi = currentProdi();
-  if(!prodi) return `<div class="empty-state"><p>Pilih program studi dulu.</p></div>`;
-  const prodiKey = prodi.key;
-
-  // Ambil data dari server otomatis kalau belum pernah / prodi baru saja diganti -- TIDAK
-  // menunggu (async), supaya tab tetap langsung terbuka & menampilkan indikator memuat.
-  if(state.statistik.prodiKey !== prodiKey && !state.statistik.loading){
-    state.statistik.prodiKey = prodiKey;
-    state.statistik.loading = true;
-    state.statistik.error = null;
-    loadStatistikData(prodiKey).then(data=>{
-      if(state.statistik.prodiKey !== prodiKey) return; // sudah pindah prodi lain sebelum selesai
-      state.statistik.data = data;
-      state.statistik.loading = false;
-      render();
-    }).catch(e=>{
-      if(state.statistik.prodiKey !== prodiKey) return;
-      state.statistik.error = 'Gagal mengambil data dari server: ' + (e && e.message || e);
-      state.statistik.loading = false;
-      render();
-    });
+  // Memuat SEMUA prodi sekaligus (tidak tergantung tab prodi yang sedang dipilih).
+  if(state.statistik.prodiKey !== 'ALL' && !state.statistik.loading){
+    startLoadAllProdi_(state.statistik, loadStatistikData);
   }
 
+  const totalKelas = PRODI.reduce((n,p)=> n + p.kelas.length, 0);
   const head = `
     <div class="panel-head">
       <div>
-        <h2>Statistik Upload &amp; Rekap &mdash; ${escapeHtml(prodi.nama)}</h2>
-        <p>Ceklis otomatis per kelas &amp; per minggu (Minggu 1&ndash;${weekLabel(STATISTIK_TOTAL_MINGGU)}, termasuk Minggu PKTOS): <strong>U</strong> = scan absensi sudah lengkap diupload, <strong>R</strong> = sudah lengkap direkap Admin. Ganti tab program studi di atas utk melihat prodi lain.</p>
+        <h2>Statistik Upload &amp; Rekap &mdash; Semua Program Studi</h2>
+        <p>Ceklis otomatis per kelas &amp; per minggu (Minggu 1&ndash;${weekLabel(STATISTIK_TOTAL_MINGGU)}, termasuk Minggu PKTOS): <strong>U</strong> = scan absensi sudah lengkap diupload, <strong>R</strong> = sudah lengkap direkap Admin. Semua prodi ditampilkan sekaligus.</p>
       </div>
       <button type="button" class="btn btn-ghost btn-sm" id="statistikRefreshBtn" ${state.statistik.loading?'disabled':''}>${state.statistik.loading?'Memuat&hellip;':'\u21bb Muat Ulang'}</button>
     </div>`;
 
-  if(state.statistik.loading && !state.statistik.data){
+  const groups = state.statistik.data || [];
+  if(state.statistik.loading && !groups.length){
     return `<div class="panel">${head}
-      <div class="empty-state"><div class="glyph">&#8987;</div><h3>Memuat data semua kelas&hellip;</h3>
-      <p>Mengambil data upload &amp; rekap utk ${prodi.kelas.length} kelas di ${escapeHtml(prodi.nama)}, mohon tunggu sebentar.</p></div>
+      <div class="empty-state"><div class="glyph">&#8987;</div><h3>Memuat data semua prodi&hellip;</h3>
+      <p>Mengambil data upload &amp; rekap utk ${totalKelas} kelas di ${PRODI.length} program studi, mohon tunggu sebentar.</p></div>
     </div>`;
-  }
-  if(state.statistik.error){
-    return `<div class="panel">${head}
-      <div class="empty-state"><div class="glyph">&#9888;</div><h3>Gagal memuat</h3><p>${escapeHtml(state.statistik.error)}</p></div>
-    </div>`;
-  }
-  if(!state.statistik.data || !state.statistik.data.length){
-    return `<div class="panel">${head}<div class="empty-state"><p>Belum ada kelas di program studi ini.</p></div></div>`;
   }
 
   const weekHeaders = Array.from({length:STATISTIK_TOTAL_MINGGU}, (_,i)=>`<th>${weekLabel(i+1)==='PKTOS'?'PKTOS':'Mgg '+weekLabel(i+1)}</th>`).join('');
-  const rows = state.statistik.data.map(cd=>{
-    let cells = '';
-    for(let w=1; w<=STATISTIK_TOTAL_MINGGU; w++){
-      cells += renderStatistikCell(computeWeekStatus(cd, w));
+
+  const sections = groups.map(g=>{
+    const heading = prodiGroupHeadingHtml_(g.prodi, g.prodi.kelas.length);
+    if(g.error){
+      return `<div style="margin-bottom:22px;">${heading}<div class="note" style="border-left:3px solid var(--danger); background:#FDEEEC; padding:10px 14px;">Gagal mengambil data prodi ini: ${escapeHtml(g.error)}. Klik &ldquo;Muat Ulang&rdquo; untuk mencoba lagi.</div></div>`;
     }
-    return `<tr><td class="statistik-kelas-cell">${escapeHtml(cd.kelas)}</td>${cells}</tr>`;
+    if(!g.classes.length){
+      return `<div style="margin-bottom:22px;">${heading}<div class="note">Belum ada kelas di program studi ini.</div></div>`;
+    }
+    const rows = g.classes.map(cd=>{
+      let cells = '';
+      for(let w=1; w<=STATISTIK_TOTAL_MINGGU; w++){
+        cells += renderStatistikCell(computeWeekStatus(cd, w));
+      }
+      return `<tr><td class="statistik-kelas-cell">${escapeHtml(cd.kelas)}</td>${cells}</tr>`;
+    }).join('');
+    return `<div style="margin-bottom:26px;">
+      ${heading}
+      <div class="excel-table-scroll">
+        <table class="statistik-table">
+          <thead><tr><th>Kelas</th>${weekHeaders}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
   }).join('');
+
+  const loadingNote = state.statistik.loading
+    ? `<div class="note" style="margin-bottom:12px;">Memuat prodi lainnya&hellip; (${groups.length}/${PRODI.length} selesai)</div>` : '';
 
   return `
   <div class="panel">
     ${head}
+    ${loadingNote}
     <div class="note" style="margin-bottom:12px; display:flex; gap:18px; flex-wrap:wrap; align-items:center;">
       <span><span class="stat-chip stat-ok">U&#10003; R&#10003;</span> lengkap semua</span>
       <span><span class="stat-chip stat-no">U&#10005;</span> upload belum lengkap</span>
       <span><span class="stat-chip stat-no">R&#10005;</span> rekap belum lengkap</span>
       <span><span class="stat-chip stat-na">&mdash;</span> belum waktunya / tidak ada jadwal</span>
     </div>
-    <div class="excel-table-scroll">
-      <table class="statistik-table">
-        <thead><tr><th>Kelas</th>${weekHeaders}</tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
+    ${sections}
   </div>`;
 }
 
@@ -4976,114 +5001,106 @@ function computeSPFirstWeeks(classData){
 }
 
 function renderRekapSP(){
-  const prodi = currentProdi();
-  if(!prodi) return `<div class="empty-state"><p>Pilih program studi dulu.</p></div>`;
-  const prodiKey = prodi.key;
-
-  // Ambil data dari server otomatis kalau belum pernah / prodi baru saja diganti -- sama
-  // seperti pola di renderStatistik().
-  if(state.rekapSP.prodiKey !== prodiKey && !state.rekapSP.loading){
-    state.rekapSP.prodiKey = prodiKey;
-    state.rekapSP.loading = true;
-    state.rekapSP.error = null;
-    loadRekapSPData(prodiKey).then(data=>{
-      if(state.rekapSP.prodiKey !== prodiKey) return;
-      state.rekapSP.data = data;
-      state.rekapSP.loading = false;
-      render();
-    }).catch(e=>{
-      if(state.rekapSP.prodiKey !== prodiKey) return;
-      state.rekapSP.error = 'Gagal mengambil data dari server: ' + (e && e.message || e);
-      state.rekapSP.loading = false;
-      render();
-    });
+  // Memuat SEMUA prodi sekaligus (tidak tergantung tab prodi yang sedang dipilih).
+  if(state.rekapSP.prodiKey !== 'ALL' && !state.rekapSP.loading){
+    startLoadAllProdi_(state.rekapSP, loadRekapSPData);
   }
 
+  const totalKelas = PRODI.reduce((n,p)=> n + p.kelas.length, 0);
   const head = `
     <div class="panel-head">
       <div>
-        <h2>Rekap SP &mdash; ${escapeHtml(prodi.nama)}</h2>
-        <p>Jumlah mahasiswa per kelas yang <strong>baru pertama kali</strong> menembus ambang SP1/SP2/SP3 (jam Alpa kumulatif sejak awal semester) pada minggu itu. Mahasiswa yang sudah pernah tercatat di satu kategori SP tidak dihitung ulang di minggu-minggu berikutnya untuk kategori yang sama -- namanya baru muncul lagi kalau kelak naik ke kategori SP berikutnya. Ganti tab program studi di atas utk melihat prodi lain.</p>
+        <h2>Rekap SP &mdash; Semua Program Studi</h2>
+        <p>Jumlah mahasiswa per kelas yang <strong>baru pertama kali</strong> menembus ambang SP1/SP2/SP3 (jam Alpa kumulatif sejak awal semester) pada minggu itu. Mahasiswa yang sudah pernah tercatat di satu kategori SP tidak dihitung ulang di minggu-minggu berikutnya untuk kategori yang sama -- namanya baru muncul lagi kalau kelak naik ke kategori SP berikutnya. Semua prodi ditampilkan sekaligus.</p>
       </div>
       <button type="button" class="btn btn-ghost btn-sm" id="rekapSPRefreshBtn" ${state.rekapSP.loading?'disabled':''}>${state.rekapSP.loading?'Memuat&hellip;':'\u21bb Muat Ulang'}</button>
     </div>`;
 
-  if(state.rekapSP.loading && !state.rekapSP.data){
+  const groups = state.rekapSP.data || [];
+  if(state.rekapSP.loading && !groups.length){
     return `<div class="panel">${head}
-      <div class="empty-state"><div class="glyph">&#8987;</div><h3>Memuat data semua kelas&hellip;</h3>
-      <p>Mengambil data mahasiswa &amp; kehadiran utk ${prodi.kelas.length} kelas di ${escapeHtml(prodi.nama)}, mohon tunggu sebentar.</p></div>
+      <div class="empty-state"><div class="glyph">&#8987;</div><h3>Memuat data semua prodi&hellip;</h3>
+      <p>Mengambil data mahasiswa &amp; kehadiran utk ${totalKelas} kelas di ${PRODI.length} program studi, mohon tunggu sebentar.</p></div>
     </div>`;
-  }
-  if(state.rekapSP.error){
-    return `<div class="panel">${head}
-      <div class="empty-state"><div class="glyph">&#9888;</div><h3>Gagal memuat</h3><p>${escapeHtml(state.rekapSP.error)}</p></div>
-    </div>`;
-  }
-  if(!state.rekapSP.data || !state.rekapSP.data.length){
-    return `<div class="panel">${head}<div class="empty-state"><p>Belum ada kelas di program studi ini.</p></div></div>`;
   }
 
-  // Satu tabel matriks: baris = kelas, kolom = Minggu 1..minggu berjalan, tiap minggu
-  // punya 3 sub-kolom SP1/SP2/SP3 (persis format Excel yang diminta), supaya semua minggu
-  // kelihatan sekaligus tanpa perlu scroll blok terpisah atau ganti dropdown.
+  // Satu tabel matriks per prodi: baris = kelas, kolom = Minggu 1..minggu berjalan, tiap minggu
+  // punya 3 sub-kolom SP1/SP2/SP3, supaya semua minggu kelihatan sekaligus.
   const curWeek = Math.min(Math.max(weekIndexForDate(todayStr(), state.semesterStart || DEFAULT_SEMESTER_START) || 1, 1), STATISTIK_TOTAL_MINGGU);
   const weeks = Array.from({length:curWeek}, (_,i)=>i+1);
-
-  // Hitung firstWeeks sekali per kelas, lalu susun jadi { kelas: { week: {sp1:[nama..], sp2:[...], sp3:[...]} } }
-  const perClassPerWeek = state.rekapSP.data.map(cd=>{
-    const firstWeeks = computeSPFirstWeeks(cd);
-    const byWeek = {};
-    weeks.forEach(w=>{ byWeek[w] = { sp1:[], sp2:[], sp3:[] }; });
-    cd.students.forEach(st=>{
-      const fw = firstWeeks[st.id];
-      SP_THRESHOLDS.forEach(t=>{
-        const w = fw[t.key];
-        if(w!=null && byWeek[w]) byWeek[w][t.key].push(st.nama);
-      });
-    });
-    return { kelas: cd.kelas, byWeek };
-  });
-
   const weekHeaderCells = weeks.map(w=>`<th colspan="3">${weekName(w)}</th>`).join('');
   const spHeaderCells = weeks.map(()=> SP_THRESHOLDS.map(t=>`<th>${t.label}</th>`).join('')).join('');
 
-  const totalPerWeek = {};
-  weeks.forEach(w=>{ totalPerWeek[w] = { sp1:0, sp2:0, sp3:0 }; });
+  const sections = groups.map(g=>{
+    const heading = prodiGroupHeadingHtml_(g.prodi, g.prodi.kelas.length);
+    if(g.error){
+      return `<div style="margin-bottom:22px;">${heading}<div class="note" style="border-left:3px solid var(--danger); background:#FDEEEC; padding:10px 14px;">Gagal mengambil data prodi ini: ${escapeHtml(g.error)}. Klik &ldquo;Muat Ulang&rdquo; untuk mencoba lagi.</div></div>`;
+    }
+    if(!g.classes.length){
+      return `<div style="margin-bottom:22px;">${heading}<div class="note">Belum ada kelas di program studi ini.</div></div>`;
+    }
 
-  const rows = perClassPerWeek.map(pc=>{
-    const cells = weeks.map(w=>{
-      const wk = pc.byWeek[w];
-      return SP_THRESHOLDS.map(t=>{
-        const n = wk[t.key].length;
-        totalPerWeek[w][t.key] += n;
-        if(!n) return `<td class="mono" style="text-align:center; color:var(--ink-soft);">&nbsp;</td>`;
-        return `<td class="mono" style="text-align:center; font-weight:700;" title="${escapeHtml(wk[t.key].join(', '))}">${n}</td>`;
+    const perClassPerWeek = g.classes.map(cd=>{
+      const firstWeeks = computeSPFirstWeeks(cd);
+      const byWeek = {};
+      weeks.forEach(w=>{ byWeek[w] = { sp1:[], sp2:[], sp3:[] }; });
+      cd.students.forEach(st=>{
+        const fw = firstWeeks[st.id];
+        SP_THRESHOLDS.forEach(t=>{
+          const w = fw[t.key];
+          if(w!=null && byWeek[w]) byWeek[w][t.key].push(st.nama);
+        });
+      });
+      return { kelas: cd.kelas, byWeek };
+    });
+
+    const totalPerWeek = {};
+    weeks.forEach(w=>{ totalPerWeek[w] = { sp1:0, sp2:0, sp3:0 }; });
+
+    const rows = perClassPerWeek.map(pc=>{
+      const cells = weeks.map(w=>{
+        const wk = pc.byWeek[w];
+        return SP_THRESHOLDS.map(t=>{
+          const n = wk[t.key].length;
+          totalPerWeek[w][t.key] += n;
+          if(!n) return `<td class="mono" style="text-align:center; color:var(--ink-soft);">&nbsp;</td>`;
+          return `<td class="mono" style="text-align:center; font-weight:700;" title="${escapeHtml(wk[t.key].join(', '))}">${n}</td>`;
+        }).join('');
       }).join('');
+      return `<tr><td class="statistik-kelas-cell">${escapeHtml(pc.kelas)}</td>${cells}</tr>`;
     }).join('');
-    return `<tr><td class="statistik-kelas-cell">${escapeHtml(pc.kelas)}</td>${cells}</tr>`;
+
+    const totalCells = weeks.map(w=>
+      SP_THRESHOLDS.map(t=>`<td class="mono" style="text-align:center;">${totalPerWeek[w][t.key]||''}</td>`).join('')
+    ).join('');
+
+    return `<div style="margin-bottom:26px;">
+      ${heading}
+      <div class="excel-table-scroll">
+        <table class="statistik-table">
+          <thead>
+            <tr><th rowspan="2">Kelas</th>${weekHeaderCells}</tr>
+            <tr>${spHeaderCells}</tr>
+          </thead>
+          <tbody>${rows}
+            <tr style="font-weight:700; background:var(--paper);">
+              <td class="statistik-kelas-cell">TOTAL ${escapeHtml(g.prodi.kode)}</td>${totalCells}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>`;
   }).join('');
 
-  const totalCells = weeks.map(w=>
-    SP_THRESHOLDS.map(t=>`<td class="mono" style="text-align:center;">${totalPerWeek[w][t.key]||''}</td>`).join('')
-  ).join('');
+  const loadingNote = state.rekapSP.loading
+    ? `<div class="note" style="margin-bottom:12px;">Memuat prodi lainnya&hellip; (${groups.length}/${PRODI.length} selesai)</div>` : '';
 
   return `
   <div class="panel">
     ${head}
+    ${loadingNote}
     <p style="font-size:12.5px; color:var(--ink-soft); margin:-6px 0 14px;">Arahkan kursor ke angka utk melihat nama mahasiswa.</p>
-    <div class="excel-table-scroll">
-      <table class="statistik-table">
-        <thead>
-          <tr><th rowspan="2">Kelas</th>${weekHeaderCells}</tr>
-          <tr>${spHeaderCells}</tr>
-        </thead>
-        <tbody>${rows}
-          <tr style="font-weight:700; background:var(--paper);">
-            <td class="statistik-kelas-cell">TOTAL</td>${totalCells}
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    ${sections}
   </div>`;
 }
 

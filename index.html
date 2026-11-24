@@ -4583,6 +4583,20 @@ function renderUpload(){
       </div>` : ''}
     </div>` : '';
 
+  // Sesi yang berkasnya sudah ditandai "tidak sesuai" oleh Admin: tetap dihitung Alpa, jadi
+  // ditampilkan di sini juga dengan tombol "Upload ulang" (berkas lama akan ditimpa).
+  const flaggedScans = state.scans.filter(sc=> sc.flagSalah && !sc.manual).sort((a,b)=> a.tanggal.localeCompare(b.tanggal));
+  const flaggedBanner = flaggedScans.length ? `
+    <div class="note" style="border-left:3px solid var(--danger); background:#FDEEEC; margin-bottom:16px; padding:12px 14px;">
+      <strong>&#9888; ${flaggedScans.length} sesi berkasnya tidak sesuai</strong> -- masih dihitung <strong>Alpa (A)</strong> sampai berkas yang benar diunggah. Klik "Upload ulang" untuk menimpa berkas yang salah:
+      <ul style="margin:8px 0 0; padding-left:18px; list-style:none; ${flaggedScans.length>8?'max-height:260px; overflow-y:auto;':''}">
+        ${flaggedScans.map(sc=>`<li style="margin-bottom:4px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span>${escapeHtml(sc.matkulNama)} &mdash; ${formatDate(sc.tanggal)}</span>
+          <button type="button" class="btn btn-accent btn-sm" data-reupload-scan="${sc.id}" title="Upload berkas yang benar dan timpa berkas yang salah">&#8593; Upload ulang</button>
+        </li>`).join('')}
+      </ul>
+    </div>` : '';
+
   // Panel admin untuk mengisi kehadiran 1 mata kuliah + 1 tanggal secara MANUAL, tanpa
   // menunggu Ketua Kelas upload dokumen scan -- untuk keadaan mendesak. Ini beda dari
   // "Tandai Hadir Semua" (yang bekerja atas SEMUA sesi yang SUDAH ADA scan-nya dalam 1
@@ -4735,6 +4749,7 @@ function renderUpload(){
         <p>Scan lembar absensi per mata kuliah, per pertemuan</p>
       </div>
     </div>
+    ${flaggedBanner}
     ${missingBanner}
     ${manualRekapPanel}
     ${uploadForm}

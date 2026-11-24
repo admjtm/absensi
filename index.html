@@ -4720,6 +4720,7 @@ function renderUpload(){
         <div class="scan-actions" style="margin-top:8px;">
           ${sc.manual ? '' : `<button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat</button>`}
           ${state.role==='admin' ? `<button class="btn ${rekapNyambungKeRoster(sc)===false?'btn-danger-ghost':'btn-primary'} btn-sm" data-open-rekap="${sc.id}">${sc.direkap?'Edit rekap':'Isi rekap'}</button>` : ''}
+          ${sc.flagSalah && !sc.manual && (state.role==='admin' || isKetuaUploadUnlockedToday()) ? `<button class="btn btn-accent btn-sm" data-reupload-scan="${sc.id}" title="Upload berkas yang benar dan timpa berkas yang salah">&#8593; Upload ulang</button>` : ''}
           ${state.role==='admin' && !sc.manual ? `<button class="btn ${sc.flagSalah?'btn-ghost':'btn-danger-ghost'} btn-sm" data-flag-scan="${sc.id}">${sc.flagSalah?'Batalkan tanda':'Tandai salah matkul'}</button>` : ''}
           ${state.role==='admin' ? `<button class="btn btn-danger-ghost btn-sm" data-del-scan="${sc.id}">Hapus</button>` : ''}
         </div>
@@ -5182,6 +5183,7 @@ function renderRekap(){
       <td>
         ${sc.manual ? '' : `<button class="btn btn-ghost btn-sm" data-view-image="${sc.id}">Lihat scan</button>`}
         ${state.role==='admin' ? `<button class="btn ${rekapNyambungKeRoster(sc)===false?'btn-danger-ghost':'btn-primary'} btn-sm" data-open-rekap="${sc.id}">${sc.direkap?'Edit rekap':'Isi rekap'}</button>` : ''}
+        ${sc.flagSalah && !sc.manual && (state.role==='admin' || isKetuaUploadUnlockedToday()) ? `<button class="btn btn-accent btn-sm" data-reupload-scan="${sc.id}" title="Upload berkas yang benar dan timpa berkas yang salah">&#8593; Upload ulang</button>` : ''}
         ${state.role==='admin' && !sc.manual ? `<button class="btn ${sc.flagSalah?'btn-ghost':'btn-danger-ghost'} btn-sm" data-flag-scan="${sc.id}">${sc.flagSalah?'Batalkan tanda':'Tandai salah matkul'}</button>` : ''}
       </td>
     </tr>`).join('');
@@ -6352,7 +6354,11 @@ function attachHandlers(){
     const mk = state.matkul.find(m=>m.id===matkulId);
     // CEK DUPLIKAT: matkul + tanggal yang sama yang sudah punya scan dokumen -> tolak dengan peringatan.
     // (Sesi manual tanpa dokumen tidak dihitung, supaya scan dokumen tetap bisa diupload belakangan.)
-    const sudahUpload = state.scans.find(s=> s.dataUrl && s.tanggal===tanggal && (mk ? scanMatchesMatkul_(s, mk) : s.matkulId===matkulId));
+    const cocokSesi_ = s=> s.dataUrl && s.tanggal===tanggal && (mk ? scanMatchesMatkul_(s, mk) : s.matkulId===matkulId);
+    // Berkas yang sudah ditandai "tidak sesuai" BOLEH ditimpa; yang tidak ditandai tetap ditolak.
+    const sudahUpload = state.scans.find(s=> cocokSesi_(s) && !s.flagSalah);
+    const salahLama = !sudahUpload ? state.scans.find(s=> cocokSesi_(s) && s.flagSalah) : null;
+    if(salahLama && !confirm('Berkas lama untuk "' + (mk ? mk.nama : '') + '" tanggal ' + formatDate(tanggal) + ' sudah ditandai TIDAK SESUAI.\n\nBerkas lama akan DITIMPA dengan berkas baru ini. Lanjutkan?')) return;
     if(sudahUpload){
       alert('⚠️ Mata kuliah "' + (mk ? mk.nama : '') + '" untuk tanggal ' + formatDate(tanggal) + ' SUDAH diupload' + (sudahUpload.direkap ? ' dan SUDAH direkap' : '') + '.\n\nUpload dibatalkan. Jika foto sebelumnya salah, minta Admin menghapus scan lama terlebih dahulu.');
       return;
@@ -6371,6 +6377,10 @@ function attachHandlers(){
         matkul: mk ? mk.nama : '(tidak diketahui)',
       };
       const driveUrl = await uploadImageToDrive(compressed, 'scan-' + tanggal + '-' + uid() + '.jpg', logInfo);
+      if(salahLama){
+        applyScanReplacement_(salahLama, driveUrl, logInfo);
+        return;
+      }
       const newScan = { id:uid(), matkulId, matkulNama: mk?mk.nama:'(tidak diketahui)', tanggal, dataUrl:driveUrl, uploadedAt:new Date().toISOString(), direkap:false, flagSalah:false, flagNote:'' };
       state.scans.push(newScan);
       // Tampilkan notifikasi (toast + titik merah lonceng) SEKARANG JUGA, tidak menunggu
@@ -6434,6 +6444,38 @@ function attachHandlers(){
       if(idx>=0) latest[idx] = {...latest[idx], flagSalah:flagVal, flagNote:flagNoteVal};
       return latest;
     });
+  }));
+  // Upload ulang berkas yang ditandai "tidak sesuai" -- bisa dipakai Admin maupun Ketua Kelas
+  // (Ketua hanya kalau menu upload sudah dibuka dengan PIN hari ini). Berkas lama DITIMPA.
+  document.querySelectorAll('[data-reupload-scan]').forEach(b=> b.addEventListener('click', ()=>{
+    if(state.role!=='admin' && !isKetuaUploadUnlockedToday()){ alert('Buka dulu menu Upload Absensi dengan PIN untuk upload ulang.'); return; }
+    const id = b.dataset.reuploadScan;
+    const sc = state.scans.find(s=>s.id===id);
+    if(!sc || !sc.flagSalah) return;
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.addEventListener('change', async ()=>{
+      const file = inp.files && inp.files[0];
+      if(!file) return;
+      if(!confirm('Berkas lama untuk "' + sc.matkulNama + '" tanggal ' + formatDate(sc.tanggal) + ' akan DITIMPA dengan berkas baru ini. Lanjutkan?')) return;
+      const oldText = b.textContent;
+      b.disabled = true; b.textContent = 'Mengunggah...';
+      try{
+        const compressed = await compressImage(file);
+        const logInfo = {
+          prodi: currentProdi() ? currentProdi().nama : state.prodi,
+          kelas: state.kelas,
+          tanggalKuliah: sc.tanggal,
+          matkul: sc.matkulNama,
+        };
+        const driveUrl = await uploadImageToDrive(compressed, 'scan-' + sc.tanggal + '-' + uid() + '.jpg', logInfo);
+        applyScanReplacement_(sc, driveUrl, logInfo);
+      }catch(err){
+        alert('Gagal mengunggah gambar. Coba lagi.');
+        b.disabled = false; b.textContent = oldText;
+      }
+    });
+    inp.click();
   }));
   document.querySelectorAll('[data-view-image]').forEach(b=> b.addEventListener('click', ()=>{
     state.modal = { type:'image', id:b.dataset.viewImage };
@@ -7415,6 +7457,25 @@ function formatUploadTime(iso){
   const tgl = dt.toLocaleDateString('id-ID', {day:'2-digit', month:'short', year:'numeric', timeZone:'Asia/Jakarta'});
   const jam = dt.toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit', timeZone:'Asia/Jakarta'});
   return tgl + ', ' + jam + ' WIB';
+}
+// Menimpa berkas scan yang SUDAH ditandai "tidak sesuai" dengan berkas baru (id scan, matkul,
+// dan tanggal tetap sama). Tanda salah dihapus, dan rekap lama dikosongkan karena rekap itu
+// dibuat dari berkas yang salah -- Admin perlu mengisi rekap ulang dari berkas yang benar.
+function applyScanReplacement_(sc, driveUrl, logInfo){
+  const id = sc.id;
+  const uploadedAt = new Date().toISOString();
+  sc.dataUrl = driveUrl; sc.uploadedAt = uploadedAt;
+  sc.flagSalah = false; sc.flagNote = ''; sc.direkap = false;
+  delete state.rekap[id];
+  notifyLocalUploadSuccess({ ...logInfo, timestamp: uploadedAt });
+  render();
+  safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
+    const idx = latest.findIndex(s=>s.id===id);
+    if(idx>=0) latest[idx] = {...latest[idx], dataUrl:driveUrl, uploadedAt, flagSalah:false, flagNote:'', direkap:false};
+    else latest.push({...sc});
+    return latest;
+  });
+  safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{ delete latest[id]; return latest; });
 }
 function compressImage(file){
   return new Promise((resolve, reject)=>{

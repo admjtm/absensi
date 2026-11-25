@@ -3002,6 +3002,8 @@ async function loadClass(isAutoRetry){
   // disimpan sendiri ke server lewat safeSaveObject/safeSaveArray) tetap dipakai.
   const adaEditLokalSetelahFetch = state.rekapDirtyAt > fetchStartedAt;
   if(!scansRes.error && !adaEditLokalSetelahFetch) state.scans = scansRes.value || [];
+  // Sesi manual yang belum terkonfirmasi di server tetap dipertahankan & dikirim ulang
+  if(!scansRes.error){ state.scans = _pmMergeInto_(base, state.scans); setTimeout(()=>{ flushPendingManualScans_(base); }, 300); }
   if(!rekapRes.error && !adaEditLokalSetelahFetch) state.rekap = rekapRes.value || {};
   if(!liburRes.error) state.libur = liburRes.value || [];
 
@@ -3299,7 +3301,7 @@ function _pendingBases_(){
   }catch(e){}
   return Object.keys(bases);
 }
-function _pendingCount_(){ let n=0; _pendingBases_().forEach(b=>{ n += Object.keys(_outboxGet_(b)).length; }); return n; }
+function _pendingCount_(){ let n=0; _pendingBases_().forEach(b=>{ n += Object.keys(_outboxGet_(b)).length; }); try{ n += _pmCount_(); }catch(e){} return n; }
 function _updatePendingBanner_(){
   try{
     const n = _pendingCount_();
@@ -3309,7 +3311,7 @@ function _updatePendingBanner_(){
       el = document.createElement('div');
       el.id = 'rekapPendingBanner';
       el.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:99999;background:#FEF3C7;border:1px solid #D97706;color:#92400E;padding:8px 12px;border-radius:10px;font:600 12px Inter,system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.15);cursor:pointer;max-width:80vw';
-      el.addEventListener('click', ()=>{ flushAllOutbox_(); });
+      el.addEventListener('click', ()=>{ flushAllOutbox_(); flushAllPendingManual_(); });
       document.body.appendChild(el);
     }
     el.textContent = '\u23F3 ' + n + ' rekap menunggu terkirim ke server \u2014 dicoba otomatis (ketuk untuk coba sekarang)';
@@ -3542,8 +3544,79 @@ async function _enrichClassData_(base, parsed){
   }catch(e){ console.error('enrich gagal (data tetap dipakai apa adanya):', e); }
   return parsed;
 }
+// ===== ANTREAN SESI MANUAL (Isi Manual Tanpa Dokumen) =====
+// PENYEBAB "sering gagal / sudah tersimpan lalu balik lagi": sesi manual baru hanya ditambahkan
+// ke daftar scan di memori lalu dikirim SEKALI lewat safeSaveArray tanpa antrean kirim-ulang
+// dan hasilnya diabaikan. Kalau kirim itu gagal/tertimpa, atau pemuatan ulang data (loadClass)
+// sempat mengambil daftar scan server yang belum memuat sesi itu, sesi manual HILANG dari layar
+// (rekap-nya sendiri tetap ada di server tapi jadi yatim karena tidak ada scan yang menunjuk).
+// Sekarang sesi manual yang belum terkonfirmasi di server disimpan di antrean persisten
+// (localStorage + memori), selalu digabungkan kembali ke daftar scan saat data dimuat, dan
+// dikirim ulang otomatis sampai server mengonfirmasi.
+const PENDING_MANUAL_PREFIX_ = 'pendingManualScans:';
+const _pendingManualMem_ = {};
+function _pmGet_(base){
+  if(_pendingManualMem_[base]) return _pendingManualMem_[base];
+  let v = {};
+  try{ v = JSON.parse(localStorage.getItem(PENDING_MANUAL_PREFIX_+base) || '{}') || {}; }catch(e){ v = {}; }
+  return (_pendingManualMem_[base] = v);
+}
+function _pmPersist_(base){
+  try{
+    const v = _pendingManualMem_[base] || {};
+    if(Object.keys(v).length) localStorage.setItem(PENDING_MANUAL_PREFIX_+base, JSON.stringify(v));
+    else localStorage.removeItem(PENDING_MANUAL_PREFIX_+base);
+  }catch(e){}
+}
+function _pmCount_(){
+  let n = 0;
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(k && k.indexOf(PENDING_MANUAL_PREFIX_)===0) n += Object.keys(_pmGet_(k.slice(PENDING_MANUAL_PREFIX_.length))).length;
+    }
+  }catch(e){}
+  Object.keys(_pendingManualMem_).forEach(b=>{ try{ if(localStorage.getItem(PENDING_MANUAL_PREFIX_+b)===null) n += Object.keys(_pendingManualMem_[b]||{}).length; }catch(e){} });
+  return n;
+}
+function _pmAdd_(base, scan){ _pmGet_(base)[scan.id] = scan; _pmPersist_(base); _updatePendingBanner_(); }
+// Gabungkan sesi manual yang belum terkonfirmasi ke daftar scan (kalau belum ada di sana)
+function _pmMergeInto_(base, arr){
+  const box = _pmGet_(base); const ids = Object.keys(box);
+  if(!ids.length) return arr;
+  const out = Array.isArray(arr) ? arr : [];
+  ids.forEach(id=>{ if(!out.some(s=>s && s.id===id)) out.push(box[id]); });
+  return out;
+}
+const _pmBusy_ = {};
+async function flushPendingManualScans_(base){
+  if(_pmBusy_[base]) return;
+  const box = _pmGet_(base); const ids = Object.keys(box);
+  if(!ids.length) return;
+  _pmBusy_[base] = true;
+  try{
+    const r = await safeSaveArray('scans:'+base, 'scans', latest=>{
+      ids.forEach(id=>{ if(!latest.some(s=>s.id===id)) latest.push(box[id]); });
+      return latest;
+    });
+    if(r && r.ok){ ids.forEach(id=>{ delete box[id]; }); _pmPersist_(base); }
+  }catch(e){ console.error('Kirim sesi manual gagal, akan dicoba lagi:', e); }
+  _pmBusy_[base] = false;
+  _updatePendingBanner_();
+}
+function flushAllPendingManual_(){
+  const bases = new Set(Object.keys(_pendingManualMem_));
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(k && k.indexOf(PENDING_MANUAL_PREFIX_)===0) bases.add(k.slice(PENDING_MANUAL_PREFIX_.length));
+    }
+  }catch(e){}
+  bases.forEach(b=>{ flushPendingManualScans_(b); });
+}
+setInterval(()=>{ if(navigator.onLine!==false && _pmCount_()>0) flushAllPendingManual_(); }, 8000);
 setInterval(()=>{ if(navigator.onLine!==false && _pendingBases_().length) flushAllOutbox_(); }, 15000);
-window.addEventListener('online', ()=>{ flushAllOutbox_(); });
+window.addEventListener('online', ()=>{ flushAllOutbox_(); flushAllPendingManual_(); });
 window.addEventListener('beforeunload', (e)=>{ if(_pendingCount_()>0){ e.preventDefault(); e.returnValue=''; } });
 setTimeout(()=>{ _updatePendingBanner_(); flushAllOutbox_(); }, 1500);
 
@@ -6066,6 +6139,7 @@ function renderModal(){
       // bagian) + baca-ulang + retry, dan itulah yang membuat simpan terasa sangat lama dan sering
       // bertabrakan. Status "Sudah direkap" otomatis diturunkan dari isi rekap saat data dimuat
       // (lihat _enrichClassData_), jadi flag itu memang tidak diperlukan di server.
+      flushPendingManualScans_(keyBase()); // pastikan sesi manual (kalau ini sesi manual) ikut terkirim ke server
       const rekapSaveResult = await safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{ latest[scanId] = result; return latest; });
       const scansSaveResult = { ok:true };
 
@@ -7064,12 +7138,12 @@ function openOrCreateManualSession(matkulId, tanggal){
   }
   const newScan = { id:uid(), matkulId:mk.id, matkulNama:mk.nama, tanggal, dataUrl:null, manual:true, uploadedAt:new Date().toISOString(), direkap:false, flagSalah:false, flagNote:'' };
   state.scans.push(newScan);
+  state.rekapDirtyAt = Date.now(); // tandai edit lokal supaya loadClass() tidak menimpa sesi baru ini
+  _pmAdd_(keyBase(), newScan);      // antrean persisten: dikirim ulang otomatis sampai server konfirmasi
+  saveCachedClass(keyBase());
   state.modal = { type:'rekap', id:newScan.id };
   render();
-  safeSaveArray('scans:'+keyBase(), 'scans', latest=>{
-    if(!latest.some(s=>s.id===newScan.id)) latest.push(newScan);
-    return latest;
-  });
+  flushPendingManualScans_(keyBase());
 }
 async function bulkMarkWeekHadir(week){
   try{

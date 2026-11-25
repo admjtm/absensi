@@ -6068,7 +6068,14 @@ function renderModal(){
       </div>`;
   }
 
-  root.querySelectorAll('[data-close-modal]').forEach(el=> el.addEventListener('click', ()=>{ state.modal=null; renderModal(); }));
+  root.querySelectorAll('[data-close-modal]').forEach(el=> el.addEventListener('click', ()=>{
+    // Kalau yang ditutup adalah modal rekap sesi manual yang masih DRAFT (belum Simpan Rekap),
+    // render() ulang seluruh halaman supaya draft dibuang dan sesi kembali muncul di daftar
+    // "belum diupload". Tanpa ini daftar tetap stale (sesi tampak hilang padahal belum tersimpan).
+    const adaDraft = !!state.draftManual;
+    state.modal=null;
+    if(adaDraft) render(); else renderModal();
+  }));
   if(state.modal.type==='image'){
     attachImgZoomHandlers(root, 'view_'+state.modal.id);
   }

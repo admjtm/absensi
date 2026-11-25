@@ -5517,7 +5517,12 @@ function renderWeeklyRecap(){
     list.forEach(mk=>{
       jumlahMatkulTampil++;
       const isPengganti = !hariArrayOfAtWeek(mk, week).includes(day);
-      matkulSubHeaderCells += `<th colspan="3" style="font-weight:600;">${escapeHtml(mk.nama)}<br><span class="mono" style="font-weight:400;">${mk.jam||1}j</span>${isPengganti ? `<br><span style="font-weight:600; color:var(--primary); font-size:9px;">(Pengganti)</span>` : ''}</th>`;
+      // Sesi minggu ini diisi MANUAL (tanpa dokumen scan) -> nama matkul di header ditulis merah tua (maroon)
+      const tglSesi = toISO(dateForDay);
+      const scansSesi = state.scans.filter(s=>scanMatchesMatkul_(s, mk) && s.tanggal===tglSesi);
+      const isManualSesi = scansSesi.some(s=>s.manual) && !scansSesi.some(s=>!s.manual);
+      const manualStyle = isManualSesi ? ' color:#800000;' : '';
+      matkulSubHeaderCells += `<th colspan="3" style="font-weight:600;${manualStyle}">${escapeHtml(mk.nama)}<br><span class="mono" style="font-weight:400;">${mk.jam||1}j</span>${isPengganti ? `<br><span style="font-weight:600; color:var(--primary); font-size:9px;">(Pengganti)</span>` : ''}</th>`;
       matkulSIACells += `<th style="font-weight:500;">S</th><th style="font-weight:500;">I</th><th style="font-weight:500;">A</th>`;
     });
   });

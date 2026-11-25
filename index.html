@@ -3003,6 +3003,7 @@ async function loadClass(isAutoRetry){
   const adaEditLokalSetelahFetch = state.rekapDirtyAt > fetchStartedAt;
   if(!scansRes.error && !adaEditLokalSetelahFetch) state.scans = scansRes.value || [];
   // Sesi manual yang belum terkonfirmasi di server tetap dipertahankan & dikirim ulang
+  if(state.draftManual && !state.scans.some(s=>s.id===state.draftManual.id)) state.scans.push(state.draftManual);
   if(!scansRes.error){ state.scans = _pmMergeInto_(base, state.scans); setTimeout(()=>{ flushPendingManualScans_(base); }, 300); }
   if(!rekapRes.error && !adaEditLokalSetelahFetch) state.rekap = rekapRes.value || {};
   if(!liburRes.error) state.libur = liburRes.value || [];
@@ -3594,12 +3595,33 @@ async function flushPendingManualScans_(base){
   const box = _pmGet_(base); const ids = Object.keys(box);
   if(!ids.length) return;
   _pmBusy_[base] = true;
+  const key = 'scans:'+base;
   try{
-    const r = await safeSaveArray('scans:'+base, 'scans', latest=>{
-      ids.forEach(id=>{ if(!latest.some(s=>s.id===id)) latest.push(box[id]); });
-      return latest;
+    // JALUR CEPAT: 1 baca + 1 tulis saja (dulu: baca + tulis + baca-verifikasi, diulang sampai 5x,
+    // dan label kuning menunggu semuanya). Verifikasi dilakukan di latar belakang.
+    const r = await _queuedSave(key, async ()=>{
+      let latest = [];
+      const g = await safeGetRaw(key);
+      if(g.error) return { ok:false };
+      if(g.found && Array.isArray(g.value)) latest = g.value;
+      else if(g.found) return { ok:false };
+      const snapshot = ids.map(id=>box[id]);
+      snapshot.forEach(sc=>{ if(!latest.some(x=>x.id===sc.id)) latest.push(sc); });
+      const w = await safeSet(key, latest);
+      return w.ok ? { ok:true } : { ok:false };
     });
-    if(r && r.ok){ ids.forEach(id=>{ delete box[id]; }); _pmPersist_(base); }
+    if(r && r.ok){
+      ids.forEach(id=>{ delete box[id]; }); _pmPersist_(base);
+      saveCachedClass(base);
+      setTimeout(async ()=>{ // verifikasi senyap
+        try{
+          const c = await safeGetRaw(key);
+          if(c.error || !c.found || !Array.isArray(c.value)) return;
+          ids.forEach(id=>{ if(!c.value.some(x=>x.id===id)){ const sc = state.scans.find(x=>x.id===id); if(sc){ _pmGet_(base)[id] = sc; _pmPersist_(base); } } });
+          if(_pmCount_()>0) flushPendingManualScans_(base);
+        }catch(e){}
+      }, 5000);
+    }
   }catch(e){ console.error('Kirim sesi manual gagal, akan dicoba lagi:', e); }
   _pmBusy_[base] = false;
   _updatePendingBanner_();
@@ -4046,6 +4068,15 @@ function notifyLocalUploadSuccess(row){
 
 /* ---------------- Render ---------------- */
 function render(){
+  // Buang sesi manual DRAFT yang modalnya sudah ditutup tanpa menekan "Simpan Rekap"
+  if(state.draftManual){
+    const d = state.draftManual;
+    const modalMasihBuka = state.modal && state.modal.type==='rekap' && state.modal.id===d.id;
+    if(!modalMasihBuka){
+      if(!(state.rekap && state.rekap[d.id])) state.scans = state.scans.filter(s=>s.id!==d.id);
+      state.draftManual = null;
+    }
+  }
   renderRoleSwitch();
   renderNotifBell();
   const app = document.getElementById('app');
@@ -6123,9 +6154,12 @@ function renderModal(){
       // (di bawah) selalu berbasis data server TERBARU supaya rekap dari device lain
       // yang masuk di sela-sela ini tidak ikut tertimpa/hilang.
       state.rekap[scanId] = result;
-      const scan = state.scans.find(s=>s.id===scanId);
+      let scan = state.scans.find(s=>s.id===scanId);
+      const wasDraft = !!(state.draftManual && state.draftManual.id===scanId);
+      if(!scan && wasDraft){ state.scans.push(state.draftManual); scan = state.draftManual; }
       if(scan) scan.direkap = true;
       state.rekapDirtyAt = Date.now(); // tandai: ada edit lokal, lihat penjelasan di loadClass()
+      if(wasDraft && scan){ state.draftManual = null; _pmAdd_(keyBase(), scan); } // baru sekarang sesi manual disimpan
       state.modal = null;
       render();
 
@@ -6139,7 +6173,7 @@ function renderModal(){
       // bagian) + baca-ulang + retry, dan itulah yang membuat simpan terasa sangat lama dan sering
       // bertabrakan. Status "Sudah direkap" otomatis diturunkan dari isi rekap saat data dimuat
       // (lihat _enrichClassData_), jadi flag itu memang tidak diperlukan di server.
-      flushPendingManualScans_(keyBase()); // pastikan sesi manual (kalau ini sesi manual) ikut terkirim ke server
+      flushPendingManualScans_(keyBase()); // kirim sesi manual (kalau ada) PARALEL dengan rekap
       const rekapSaveResult = await safeSaveObject('rekap:'+keyBase(), 'rekap', latest=>{ latest[scanId] = result; return latest; });
       const scansSaveResult = { ok:true };
 
@@ -7137,13 +7171,12 @@ function openOrCreateManualSession(matkulId, tanggal){
     return;
   }
   const newScan = { id:uid(), matkulId:mk.id, matkulNama:mk.nama, tanggal, dataUrl:null, manual:true, uploadedAt:new Date().toISOString(), direkap:false, flagSalah:false, flagNote:'' };
+  // DRAFT: sesi baru ini HANYA ada di layar. Belum disimpan/dikirim apa pun ke server sampai
+  // tombol "Simpan Rekap" ditekan. Kalau modal ditutup tanpa simpan, draft dibuang (lihat render()).
   state.scans.push(newScan);
-  state.rekapDirtyAt = Date.now(); // tandai edit lokal supaya loadClass() tidak menimpa sesi baru ini
-  _pmAdd_(keyBase(), newScan);      // antrean persisten: dikirim ulang otomatis sampai server konfirmasi
-  saveCachedClass(keyBase());
+  state.draftManual = newScan;
   state.modal = { type:'rekap', id:newScan.id };
   render();
-  flushPendingManualScans_(keyBase());
 }
 async function bulkMarkWeekHadir(week){
   try{

@@ -2838,9 +2838,12 @@ function saveCachedClass(base){
 // dan itulah yang bikin mahasiswa melihat data "tidak sinkron" saat pertama membuka kelas --
 // jadi untuk cache basi tampilkan "Memuat data kelas..." dulu sampai data terbaru datang
 // (cache lama tetap dipakai sebagai cadangan kalau pengambilan dari server gagal).
-const CACHE_FRESH_MS = 30*60*1000;
+// PERCEPATAN: cache ditampilkan LANGSUNG walau sudah lama (maks 30 hari), sementara data terbaru
+// diambil di belakang layar (banner "Menyegarkan data terbaru..." tampil, dan vonis "TIDAK SINKRON"
+// ditahan selama proses itu). Dulu batasnya 30 menit sehingga hampir selalu muncul layar loading.
+const CACHE_FRESH_MS = 30*24*60*60*1000;
 window.__reloadClass_ = ()=>{ loadClass(); };
-const APP_BUILD_ = 'build 2026-11-09 e';
+const APP_BUILD_ = 'build 2026-11-26 cache-instan';
 document.addEventListener('DOMContentLoaded', ()=>{ const d=document.createElement('div'); d.textContent=APP_BUILD_; d.style.cssText='position:fixed;right:6px;bottom:4px;font:10px monospace;opacity:.45;z-index:5;pointer-events:none;'; document.body.appendChild(d); });
 function clearClassState_(){
   // Kosongkan data kelas yang sedang tampil supaya data kelas SEBELUMNYA (mis. 1A) tidak pernah

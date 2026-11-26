@@ -3160,6 +3160,18 @@ async function prefetchSiblings_(seq){
 // Mengembalikan array berisi 6 objek {found, value, error} (satu per key, urutan sama dengan
 // `keys` di bawah) -- SELALU dalam bentuk ini (bukan cuma "value" mentah), supaya pemanggil
 // (loadClass) bisa membedakan "datanya kosong" dari "gagal diambil". Lihat catatan di loadClass().
+// ===== PRAMUAT DARI SERVER (expand=1) =====
+// Server (Code.gs baru) boleh menyertakan pecahan data & rekap per-sesi dalam balasan batch yang
+// sama. Isinya disimpan sebentar di memori (sekali pakai, kedaluwarsa 60 dtk) dan dipakai oleh
+// _safeGetRawPlain_ / fetchRekapSessions_ sebagai ganti request terpisah. Kalau server lama
+// tidak mengirimnya, memo kosong dan semuanya berjalan seperti biasa.
+const _pf_ = Object.create(null);
+function _pfPut_(k, entry){ _pf_[k] = { e: entry, t: Date.now() }; }
+function _pfTake_(k){
+  const x = _pf_[k]; if(!x) return null;
+  delete _pf_[k];
+  return (Date.now() - x.t < 60000) ? x.e : null;
+}
 async function batchGetClassData_(base){
   const keys = ['roster:'+base, 'matkul:'+base, 'scans:'+base, 'rekap:'+base, 'semesterStart:'+base, 'libur:'+base];
   try{
@@ -3168,9 +3180,10 @@ async function batchGetClassData_(base){
     // rekap, perangkat yang sama (atau tab lain) bisa saja menerima balikan cache lama yang
     // belum ada rekapnya -- inilah salah satu sebab status kehadiran sempat tampil "Alpa semua"
     // padahal sudah direkap, sampai cache browser itu akhirnya kedaluwarsa.
-    const res = await _fetchT_(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')), { cache:'no-store' });
+    const res = await _fetchT_(SHEETS_API_URL + '?keys=' + encodeURIComponent(keys.join(',')) + '&expand=1', { cache:'no-store' });
     const r = await res.json();
     if(r && r.values){
+      Object.keys(r.values).forEach(k=>{ if(keys.indexOf(k)<0 && r.values[k]) _pfPut_(k, r.values[k]); });
       const parse = (k)=>{
         const entry = r.values[k];
         if(!entry) return { found:false, value:null, error:false };
@@ -3199,6 +3212,14 @@ async function batchGetClassData_(base){
   return _enrichClassData_(base, await Promise.all(keys.map(k=> safeGetRaw(k))));
 }
 async function _safeGetRawPlain_(key){
+  const _pe = _pfTake_(key);
+  if(_pe){
+    if(_pe.found && _pe.value){
+      try{ return { found:true, value: JSON.parse(_pe.value), error:false }; }catch(x){ /* rusak -> ambil ulang dari server */ }
+    } else if(!_pe.found){
+      return { found:false, value:null, error:false };
+    }
+  }
   try{
     // cache:'no-store' -- lihat catatan di batchGetClassData_ di atas: tanpa ini, hasil GET
     // untuk key yang sama bisa disajikan dari cache browser yang sudah basi.
@@ -3421,6 +3442,15 @@ async function fetchRekapSessions_(base, ids){
   const sleep = ms=> new Promise(r=> setTimeout(r, ms));
   async function doChunk(ch){
     let pending = ch.slice();
+    // pakai data pramuat dari server dulu (kalau ada); sisanya baru diambil lewat request
+    pending = pending.filter(id=>{
+      const pe = _pfTake_(_rekapSesKey_(base,id));
+      if(!pe) return true;
+      if(pe.found && pe.value){
+        try{ out[id] = (typeof pe.value==='string') ? JSON.parse(pe.value) : pe.value; }catch(x){ return true; }
+      }
+      return false;
+    });
     for(let attempt=0; attempt<3 && pending.length; attempt++){
       if(attempt) await sleep(600*attempt);
       const keys = pending.map(id=> _rekapSesKey_(base,id));
